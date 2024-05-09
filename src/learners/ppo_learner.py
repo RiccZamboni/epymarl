@@ -146,6 +146,26 @@ class PPOLearner:
         v = critic(batch)[:, :-1].squeeze(3)
         td_error = (target_returns.detach() - v)
         masked_td_error = td_error * mask
+
+        if self.args.use_critic_weighting:
+            if self.args.critic_weight_quantity == "return":
+                with th.no_grad():
+                    avg_episode_target_returns = target_returns.sum(dim=1) / mask.sum(dim=1)
+                    if self.args.critic_weight_criteria == "mean":
+                        weights = avg_episode_target_returns.mean(dim=0)
+                    elif self.args.critic_weight_criteria == "max":
+                        weights = avg_episode_target_returns.max(dim=0).values
+                    weight_mask = th.ones_like(mask) * weights
+            elif self.args.critic_weight_quantity == "td_error":
+                with th.no_grad():
+                    avg_episode_td_error = masked_td_error.abs().sum(dim=1) / mask.sum(dim=1)
+                    if self.args.critic_weight_criteria == "mean":
+                        weights = avg_episode_td_error.mean(dim=0)
+                    elif self.args.critic_weight_criteria == "max":
+                        weights = avg_episode_td_error.max(dim=0).values
+                    weight_mask = th.ones_like(mask) * weights
+
+
         loss = (masked_td_error ** 2).sum() / mask.sum()
 
         self.critic_optimiser.zero_grad()
