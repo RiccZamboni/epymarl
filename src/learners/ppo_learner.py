@@ -115,6 +115,10 @@ class PPOLearner:
             for key in ["critic_loss", "critic_grad_norm", "td_error_abs", "q_taken_mean", "target_mean"]:
                 self.logger.log_stat(key, sum(critic_train_stats[key]) / ts_logged, t_env)
 
+            if self.args.use_critic_weighting:
+                for i in range(self.n_agents):
+                    self.logger.log_stat(f"critic_weight_{i}", sum(critic_train_stats[f"critic_weight_{i}"]) / ts_logged, t_env)
+
             self.logger.log_stat("advantage_mean", (advantages * mask).sum().item() / mask.sum().item(), t_env)
             self.logger.log_stat("pg_loss", pg_loss.item(), t_env)
             self.logger.log_stat("agent_grad_norm", grad_norm.item(), t_env)
@@ -143,6 +147,11 @@ class PPOLearner:
             "q_taken_mean": [],
         }
 
+        # add logs for critic weights of each agent
+        if self.args.use_critic_weighting:
+            for i in range(self.n_agents):
+                running_log[f"critic_weight_{i}"] = []
+
         v = critic(batch)[:, :-1].squeeze(3)
         td_error = (target_returns.detach() - v)
         masked_td_error = td_error * mask
@@ -150,20 +159,47 @@ class PPOLearner:
         if self.args.use_critic_weighting:
             if self.args.critic_weight_quantity == "return":
                 with th.no_grad():
+                    # Calculate the average return for each episode
                     avg_episode_target_returns = target_returns.sum(dim=1) / mask.sum(dim=1)
+                    # Calculate the mean or max return over all batches
                     if self.args.critic_weight_criteria == "mean":
-                        weights = avg_episode_target_returns.mean(dim=0)
+                        return_values = avg_episode_target_returns.mean(dim=0)
                     elif self.args.critic_weight_criteria == "max":
-                        weights = avg_episode_target_returns.max(dim=0).values
+                        return_values = avg_episode_target_returns.max(dim=0).values
+                    else:
+                        raise ValueError("Invalid critic weight criteria")
+                    # shift weight values to positive if they are already not
+                    if any(return_values < 0):
+                        return_values -= return_values.min()
+                        # add a standard deviation to the weights, to avoid division by zero
+                        return_values += return_values.std() * 0.1
+                    # create weights inversely proposrtional to the return values
+                    weights = 1 / return_values
+                    # normalise the weights
+                    weights /= weights.sum()
+                    # multiply the weights by number of agents to get the final weights
+                    weights *= self.n_agents
                     weight_mask = th.ones_like(mask) * weights
+                    masked_td_error *= weight_mask
             elif self.args.critic_weight_quantity == "td_error":
                 with th.no_grad():
+                    # Calculate the average td error for each episode
                     avg_episode_td_error = masked_td_error.abs().sum(dim=1) / mask.sum(dim=1)
+                    # Calculate the mean or max td error over all batches
                     if self.args.critic_weight_criteria == "mean":
                         weights = avg_episode_td_error.mean(dim=0)
                     elif self.args.critic_weight_criteria == "max":
                         weights = avg_episode_td_error.max(dim=0).values
+                    else:
+                        raise ValueError("Invalid critic weight criteria")
+                    # normalise the weights
+                    weights /= weights.sum()
+                    # multiply the weights by number of agents to get the final weights
+                    weights *= self.n_agents
                     weight_mask = th.ones_like(mask) * weights
+                    masked_td_error *= weight_mask
+            else:
+                raise ValueError("Invalid critic weight quantity")
 
 
         loss = (masked_td_error ** 2).sum() / mask.sum()
@@ -179,6 +215,10 @@ class PPOLearner:
         running_log["td_error_abs"].append((masked_td_error.abs().sum().item() / mask_elems))
         running_log["q_taken_mean"].append((v * mask).sum().item() / mask_elems)
         running_log["target_mean"].append((target_returns * mask).sum().item() / mask_elems)
+
+        if self.args.use_critic_weighting:
+            for i in range(self.n_agents):
+                running_log[f"critic_weight_{i}"].append(weights[i].item())
 
         return masked_td_error, running_log
 

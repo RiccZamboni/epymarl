@@ -35,7 +35,7 @@ name: "ippo"
 t_max: 20050000
 
 # critic loss weighting
-use_critic_weighting: True
-critic_weight_quantity: "td_error" # "return" or "td_error" 
+use_critic_weighting: False
+critic_weight_quantity: "return" # "return" or "td_error" 
 critic_weight_criteria: "mean" # "mean" or "max"
 
