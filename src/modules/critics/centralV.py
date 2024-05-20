@@ -30,10 +30,16 @@ class CentralVCritic(nn.Module):
 
     def forward(self, batch, t=None):
         inputs, bs, max_t = self._build_inputs(batch, t=t)
+        # only consider single agent's data to avoid duplicate data
+        if self.args.avoid_duplicate_data:
+            inputs = inputs[:, :, 0, :]
+            n_agents = 1
+        else:
+            n_agents = self.n_agents
         # reshape inputs and initialize hidden states
-        inputs = inputs.view(max_t, bs*self.n_agents, -1)
+        inputs = inputs.view(max_t, bs*n_agents, -1)
         if self.args.use_critic_rnn:
-            h = self.init_hidden().repeat(bs*self.n_agents, 1)
+            h = self.init_hidden().repeat(bs*n_agents, 1)
         # rollout through max_t steps to get values
         qs = []
         for input in inputs:
@@ -44,7 +50,7 @@ class CentralVCritic(nn.Module):
                 h = F.relu(self.rnn(x))
             q = self.fc3(x)
             qs.append(q)
-        q = th.stack(qs).view(bs, max_t, self.n_agents, 1)
+        q = th.stack(qs).view(bs, max_t, n_agents, 1)
         return q
 
     def _build_inputs(self, batch, t=None):
@@ -70,7 +76,9 @@ class CentralVCritic(nn.Module):
                 last_actions = last_actions.view(bs, max_t, 1, -1).repeat(1, 1, self.n_agents, 1)
                 inputs.append(last_actions)
 
-        inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1))
+        # add agent id as input when not avoiding duplicate data
+        if not self.args.avoid_duplicate_data:
+            inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1))
 
         inputs = th.cat(inputs, dim=-1)
         return inputs, bs, max_t
@@ -84,5 +92,8 @@ class CentralVCritic(nn.Module):
         # last actions
         if self.args.obs_last_action:
             input_shape += scheme["actions_onehot"]["vshape"][0] * self.n_agents
-        input_shape += self.n_agents
+
+        # add agent id as input when not avoiding duplicate data
+        if not self.args.avoid_duplicate_data:
+            input_shape += self.n_agents
         return input_shape

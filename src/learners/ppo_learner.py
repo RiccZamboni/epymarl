@@ -130,6 +130,10 @@ class PPOLearner:
         if self.args.standardise_returns:
             target_vals = target_vals * th.sqrt(self.ret_ms.var) + self.ret_ms.mean
 
+        # use mask from first agent only to avoid duplicate data
+        if self.args.avoid_duplicate_data:
+            mask = mask[:, :, 0].view(mask.size(0), mask.size(1), 1)
+
         target_returns = self.nstep_returns(rewards, mask, target_vals, self.args.q_nstep)
         if self.args.standardise_returns:
             self.ret_ms.update(target_returns)

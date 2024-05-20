@@ -18,6 +18,8 @@ obs_agent_id: True
 obs_last_action: False
 obs_individual_obs: False
 
+avoid_duplicate_data: False # Avoids duplicate data in the inputs of critic network (only applicable for common reward setting, i.e. 'gymma')
+
 agent_output_type: "pi_logits"
 learner: "ppo_learner"
 entropy_coef: 0.01

@@ -263,4 +263,18 @@ def args_sanity_check(config, _log):
             config["test_nepisode"] // config["batch_size_run"]
         ) * config["batch_size_run"]
 
+    # make sure the duplicate data is only avoided for centralV critic and shared reward settings 'gymma'
+    if config["avoid_duplicate_data"]:
+        if config["critic_type"] != "cv_critic":
+            _log.warning(
+                "avoid_duplicate_data is only applicable for centralV critic. Setting it to False."
+            )
+            config["avoid_duplicate_data"] = False
+
+        if config["env"] != "gymma":
+            _log.warning(
+                "avoid_duplicate_data is only applicable for shared reward settings. Setting it to False."
+            )
+            config["avoid_duplicate_data"] = False
+
     return config
