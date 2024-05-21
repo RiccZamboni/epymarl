@@ -178,8 +178,8 @@ class PPOLearner:
         return masked_td_error, running_log
     
     def train_modularV_sequential(self, critic, target_critic, batch, rewards, mask):
-        # make sure this is only possible for gymma envs
-        assert self.args.env == "gymma"
+        # make sure this is only possible for gymmai envs
+        assert self.args.env == "gymmai"
         # Optimise critic
         with th.no_grad():
             target_vals_state, target_vals_obs = target_critic(batch)
