@@ -1,0 +1,145 @@
+# code adapted from https://github.com/AnujMahajanOxf/MAVEN
+
+import torch as th
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class ModularVCritic(nn.Module):
+    def __init__(self, scheme, args):
+        super(ModularVCritic, self).__init__()
+
+        self.args = args
+        self.n_actions = args.n_actions
+        self.n_agents = args.n_agents
+
+        input_state_shape = self._get_input_state_shape(scheme)
+        input_obs_shape = self._get_input_obs_shape(scheme)
+
+        self.output_type = "v"
+
+        # Set up network layers for state
+        self.fc1 = nn.Linear(input_state_shape, args.hidden_dim)
+        if self.args.use_critic_rnn:
+            self.rnn = nn.GRUCell(args.hidden_dim, args.hidden_dim)
+        else:
+            self.rnn = nn.Linear(args.hidden_dim, args.hidden_dim)
+        self.fc3 = nn.Linear(args.hidden_dim, 1)
+
+        # Set up network layers for obs
+        self.fc1_obs = nn.Linear(input_obs_shape, args.hidden_dim)
+        if self.args.use_critic_rnn:
+            self.rnn_obs = nn.GRUCell(args.hidden_dim, args.hidden_dim)
+        else:
+            self.rnn_obs = nn.Linear(args.hidden_dim, args.hidden_dim)
+        self.fc3_obs = nn.Linear(args.hidden_dim, 1)
+
+
+    def init_hidden(self):
+        # make hidden states on same device as model
+        return self.fc1.weight.new(1, self.args.hidden_dim).zero_()
+    
+    def forward_state(self, inputs, bs, max_t):
+        # reshape inputs and initialize hidden states
+        inputs = inputs.view(max_t, bs*self.n_agents, -1)
+        if self.args.use_critic_rnn:
+            h = self.init_hidden().repeat(bs*self.n_agents, 1)
+        # rollout through max_t steps to get values
+        qs = []
+        for input in inputs:
+            x = F.relu(self.fc1(input))
+            if self.args.use_critic_rnn:
+                h = self.rnn(x, h)
+            else:
+                h = F.relu(self.rnn(x))
+            q = self.fc3(x)
+            qs.append(q)
+        q = th.stack(qs).view(bs, max_t, self.n_agents, 1)
+        return q
+    
+    def forward_obs(self, inputs, bs, max_t):
+        # reshape inputs and initialize hidden states
+        inputs = inputs.view(max_t, bs*self.n_agents, -1)
+        if self.args.use_critic_rnn:
+            h = self.init_hidden().repeat(bs*self.n_agents, 1)
+        # rollout through max_t steps to get values
+        qs = []
+        for input in inputs:
+            x = F.relu(self.fc1_obs(input))
+            if self.args.use_critic_rnn:
+                h = self.rnn_obs(x, h)
+            else:
+                h = F.relu(self.rnn_obs(x))
+            q = self.fc3_obs(x)
+            qs.append(q)
+        q = th.stack(qs).view(bs, max_t, self.n_agents, 1)
+        return q
+
+    def forward(self, batch, t=None):
+        inputs, bs, max_t = self._build_inputs_state(batch, t=t)
+        q_state = self.forward_state(inputs, bs, max_t)
+
+        inputs, bs, max_t = self._build_inputs_obs(batch, t=t)
+        q_obs = self.forward_obs(inputs, bs, max_t)
+
+        return q_state, q_obs
+
+    def _build_inputs_state(self, batch, t=None):
+        bs = batch.batch_size
+        max_t = batch.max_seq_length if t is None else 1
+        ts = slice(None) if t is None else slice(t, t+1)
+        inputs = []
+        # state
+        inputs.append(batch["state"][:, ts].unsqueeze(2).repeat(1, 1, self.n_agents, 1))
+
+        # observations
+        if self.args.obs_individual_obs:
+            inputs.append(batch["obs"][:, ts].view(bs, max_t, -1).unsqueeze(2).repeat(1, 1, self.n_agents, 1))
+
+        # last actions
+        if self.args.obs_last_action:
+            if t == 0:
+                inputs.append(th.zeros_like(batch["actions_onehot"][:, 0:1]).view(bs, max_t, 1, -1))
+            elif isinstance(t, int):
+                inputs.append(batch["actions_onehot"][:, slice(t-1, t)].view(bs, max_t, 1, -1))
+            else:
+                last_actions = th.cat([th.zeros_like(batch["actions_onehot"][:, 0:1]), batch["actions_onehot"][:, :-1]], dim=1)
+                last_actions = last_actions.view(bs, max_t, 1, -1).repeat(1, 1, self.n_agents, 1)
+                inputs.append(last_actions)
+
+        inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1))
+
+        inputs = th.cat(inputs, dim=-1)
+        return inputs, bs, max_t
+    
+    def _build_inputs_obs(self, batch, t=None):
+        bs = batch.batch_size
+        max_t = batch.max_seq_length if t is None else 1
+        ts = slice(None) if t is None else slice(t, t+1)
+        inputs = []
+        # observations
+        inputs.append(batch["obs"][:, ts])
+
+        inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1))
+
+        inputs = th.cat(inputs, dim=-1)
+        return inputs, bs, max_t
+
+    def _get_input_state_shape(self, scheme):
+        # state
+        input_shape = scheme["state"]["vshape"]
+        # observations
+        if self.args.obs_individual_obs:
+            input_shape += scheme["obs"]["vshape"] * self.n_agents
+        # last actions
+        if self.args.obs_last_action:
+            input_shape += scheme["actions_onehot"]["vshape"][0] * self.n_agents
+        input_shape += self.n_agents
+        return input_shape
+    
+    def _get_input_obs_shape(self, scheme):
+        # observations
+        input_shape = scheme["obs"]["vshape"]
+        # agent id
+        input_shape += self.n_agents
+        return input_shape

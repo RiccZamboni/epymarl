@@ -1,5 +1,6 @@
 from .coma import COMACritic
 from .centralV import CentralVCritic
+from .modularV import ModularVCritic
 from .coma_ns import COMACriticNS
 from .centralV_ns import CentralVCriticNS
 from .maddpg import MADDPGCritic
@@ -12,6 +13,7 @@ REGISTRY = {}
 
 REGISTRY["coma_critic"] = COMACritic
 REGISTRY["cv_critic"] = CentralVCritic
+REGISTRY["modular_critic"] = ModularVCritic
 REGISTRY["coma_critic_ns"] = COMACriticNS
 REGISTRY["cv_critic_ns"] = CentralVCriticNS
 REGISTRY["maddpg_critic"] = MADDPGCritic

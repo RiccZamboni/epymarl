@@ -77,9 +77,24 @@ class PPOLearner:
             mac_out = th.stack(mac_out, dim=1)  # Concat over time
 
             pi = mac_out
-            advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
-                                                                          critic_mask)
-            advantages = advantages.detach()
+            if self.args.name == "modppo":
+                advantages_obs, advantages_state, critic_train_stats = self.train_modularV_sequential(self.critic, self.target_critic, batch, rewards, critic_mask)
+                advantages_obs = advantages_obs.detach()
+                advantages_state = advantages_state.detach()
+                # make advantages vector according to agent_v_vector e.g. if agent_v_vector = ['c', 'c', 'i', 'c', 'c'] 
+                # then advantages should have for third agent should correspond to advantages_state and for the rest should correspond to advantages_obs
+                assert len(self.args.agent_v_vector) == self.n_agents
+                advantages = th.zeros_like(advantages_obs)
+                for i, agent_v in enumerate(self.args.agent_v_vector):
+                    if agent_v == 'c':
+                        advantages[:, :, i] = advantages_state[:, :, i]
+                    elif agent_v == 'i':
+                        advantages[:, :, i] = advantages_obs[:, :, i]
+                    else:
+                        raise ValueError("agent_v_vector should only contain 'c' or 'i'")
+            else:
+                advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards, critic_mask)
+                advantages = advantages.detach()
             # Calculate policy grad with mask
 
             pi[mask == 0] = 1.0
@@ -161,6 +176,61 @@ class PPOLearner:
         running_log["target_mean"].append((target_returns * mask).sum().item() / mask_elems)
 
         return masked_td_error, running_log
+    
+    def train_modularV_sequential(self, critic, target_critic, batch, rewards, mask):
+        # make sure this is only possible for gymma envs
+        assert self.args.env == "gymma"
+        # Optimise critic
+        with th.no_grad():
+            target_vals_state, target_vals_obs = target_critic(batch)
+            target_vals_state = target_vals_state.squeeze(3)
+            target_vals_obs = target_vals_obs.squeeze(3)
+
+        if self.args.standardise_returns:
+            target_vals_state = target_vals_state * th.sqrt(self.ret_ms.var) + self.ret_ms.mean
+            target_vals_obs = target_vals_obs * th.sqrt(self.ret_ms.var) + self.ret_ms.mean
+
+        # target combioned return consider sum of rewards of agents
+        combined_rewards = rewards.sum(dim=2, keepdim=True)
+        target_returns_state = self.nstep_returns(combined_rewards, mask, target_vals_state, self.args.q_nstep)
+
+        target_returns_obs = self.nstep_returns(rewards, mask, target_vals_obs, self.args.q_nstep)
+        if self.args.standardise_returns:
+            self.ret_ms.update(target_returns)
+            target_returns = (target_returns - self.ret_ms.mean) / th.sqrt(self.ret_ms.var)
+
+        running_log = {
+            "critic_loss": [],
+            "critic_grad_norm": [],
+            "td_error_abs": [],
+            "target_mean": [],
+            "q_taken_mean": [],
+        }
+
+        v_state, v_obs = critic(batch)
+        v_state = v_state[:, :-1].squeeze(3)
+        v_obs = v_obs[:, :-1].squeeze(3)
+        td_error_state = (target_returns_state.detach() - v_state)
+        td_error_obs = (target_returns_obs.detach() - v_obs)
+        masked_td_error_state = td_error_state * mask
+        masked_td_error_obs = td_error_obs * mask
+        loss_state = (masked_td_error_state ** 2).sum() / mask.sum()
+        loss_obs = (masked_td_error_obs ** 2).sum() / mask.sum()
+
+        self.critic_optimiser.zero_grad()
+        loss_state.backward()
+        loss_obs.backward()
+        grad_norm = th.nn.utils.clip_grad_norm_(self.critic_params, self.args.grad_norm_clip)
+        self.critic_optimiser.step()
+
+        running_log["critic_loss"].append(loss_obs.item())
+        running_log["critic_grad_norm"].append(grad_norm.item())
+        mask_elems = mask.sum().item()
+        running_log["td_error_abs"].append((masked_td_error_obs.abs().sum().item() / mask_elems))
+        running_log["q_taken_mean"].append((v_obs * mask).sum().item() / mask_elems)
+        running_log["target_mean"].append((target_returns_obs * mask).sum().item() / mask_elems)
+
+        return masked_td_error_obs, masked_td_error_state, running_log
 
     def nstep_returns(self, rewards, mask, values, nsteps):
         nstep_values = th.zeros_like(values[:, :-1])
