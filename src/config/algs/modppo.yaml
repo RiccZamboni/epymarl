@@ -26,6 +26,7 @@ use_critic_rnn: True
 standardise_returns: False
 standardise_rewards: False
 q_nstep: 5 # 1 corresponds to normal r + gammaV
+agent: "modular_rnn"
 critic_type: "modular_critic"
 agent_v_vector: ['c', 'c', 'i', 'c', 'c']
 epochs: 4
