@@ -33,6 +33,11 @@ class ACCriticNS(nn.Module):
             qs.append(q.view(bs, max_t, 1, -1))
         q = th.cat(qs, dim=2)
         return q
+    
+
+    # Add a new forward function that accepts agent_id as an argument
+    # This new forward function will only return the critic values with the critic for given agent_id
+    # e.g. def forward(self, batch, t=None, agent_id):
 
     def _build_inputs(self, batch, t=None):
         bs = batch.batch_size

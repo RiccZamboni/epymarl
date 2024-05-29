@@ -18,10 +18,10 @@ obs_agent_id: False
 obs_last_action: False
 obs_individual_obs: False
 
-mac: "non_shared_mac"
+mac: "exp_share_mac"
 agent: "rnn_ns"
 agent_output_type: "pi_logits"
-learner: "ppo_learner"
+learner: "seppo_learner"
 entropy_coef: 0.01
 standardise_returns: False
 standardise_rewards: True
@@ -31,6 +31,6 @@ epochs: 4
 eps_clip: 0.2
 q_nstep: 5 # 1 corresponds to normal r + gammaV
 critic_type: "ac_critic_ns"
-name: "ippo_ns"
+name: "seppo"
 
 t_max: 20050000

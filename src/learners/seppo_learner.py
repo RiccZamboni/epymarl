@@ -68,15 +68,26 @@ class SEPPOLearner:
         old_pi_taken = th.gather(old_pi, dim=3, index=actions).squeeze(3)
         old_log_pi_taken = th.log(old_pi_taken + 1e-10)
 
+        # set total seppo_loss=0
+
         for k in range(self.args.epochs):
+
+        # add for loop loop over all agents
+        # e.g. for agent_id in range(n_agents)
             mac_out = []
             self.mac.init_hidden(batch.batch_size)
             for t in range(batch.max_seq_length - 1):
+                # create forward loop in mac s.t it rollouts using given agent_id
+                # this forward loop creates agents_outs using the batch of all agents but with only agent_id (instead each agent_id rolling out barch data from each agent seprately as default behaviour in not-shared macs)
+                # e.g. agent_outs = self.mac.forward(batch, t=t, agent_id=agent_id)
                 agent_outs = self.mac.forward(batch, t=t)
                 mac_out.append(agent_outs)
             mac_out = th.stack(mac_out, dim=1)  # Concat over time
 
             pi = mac_out
+            # create critic sqeuential such that only agent_id is used for training
+            # can be done by adding agent_id as an argument to the function
+            # e.g. advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards, critic_mask, agent_id)
             advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
                                                                           critic_mask)
             advantages = advantages.detach()
@@ -92,7 +103,19 @@ class SEPPOLearner:
             surr2 = th.clamp(ratios, 1 - self.args.eps_clip, 1 + self.args.eps_clip) * advantages
 
             entropy = -th.sum(pi * th.log(pi + 1e-10), dim=-1)
+
+            # define lambda as a vector of ones of n_agents size
+            # e.g. lambda = th.ones(n_agents)
+
+            # redefine pg_loss as agent-wise multiplication of lambda and pg_loss
+
             pg_loss = -((th.min(surr1, surr2) + self.args.entropy_coef * entropy) * mask).sum() / mask.sum()
+
+            # add pg_loss to seppo_loss
+            # e.g. pg_loss = seppo_loss + pg_loss
+
+            # The below part will be out of the for loops of agent_id
+            # replace pg_loss with seppo_loss 
 
             # Optimise agents
             self.agent_optimiser.zero_grad()
@@ -110,6 +133,7 @@ class SEPPOLearner:
         elif self.args.target_update_interval_or_tau <= 1.0:
             self._update_targets_soft(self.args.target_update_interval_or_tau)
 
+        # logging should be done for each agent_id
         if t_env - self.log_stats_t >= self.args.learner_log_interval:
             ts_logged = len(critic_train_stats["critic_loss"])
             for key in ["critic_loss", "critic_grad_norm", "td_error_abs", "q_taken_mean", "target_mean"]:
@@ -122,6 +146,9 @@ class SEPPOLearner:
             self.log_stats_t = t_env
 
     def train_critic_sequential(self, critic, target_critic, batch, rewards, mask):
+        # accept agent_id as an argument
+
+        # check if we can keep this critic forward our of the for loop since the batch stays the same for all epochs 
         # Optimise critic
         with th.no_grad():
             target_vals = target_critic(batch)
@@ -143,6 +170,10 @@ class SEPPOLearner:
             "q_taken_mean": [],
         }
 
+        # check if we really need the importance sampling for the critic (My guess is that we don't need it since there is no assumption that critic network expects data from the same distribution)
+
+        # critic forward function needs to be modified to accept agent_id as an argument
+        # This new forward function will only return the critic values with the critic for given agent_id
         v = critic(batch)[:, :-1].squeeze(3)
         td_error = (target_returns.detach() - v)
         masked_td_error = td_error * mask
