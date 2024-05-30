@@ -7,15 +7,32 @@ import torch as th
 # create ExpShareMAC class that inherits from NonSharedMAC
 class ExpShareMAC(NonSharedMAC):
 
-    def forward(self, ep_batch, t, test_mode=False, agent_id='dummy'):
-        # print('agent_id:', agent_id)
+    def select_actions(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False, agent_id=None):
+        if agent_id is None:
+            agent_id = 0 # TO BE CHANGED LATER: set to try exp sharing with agent_id 0
+            # # execute select_actions function from NonSharedMAC
+            # chosen_actions = super().select_actions(ep_batch, t_ep, t_env, bs, test_mode)
+            # return chosen_actions
+        # Only select actions for the selected batch elements in bs
+        avail_actions = ep_batch["avail_actions"][:, t_ep]
+        agent_outputs = self.forward(ep_batch, t_ep, test_mode=test_mode, agent_id=agent_id )
+        chosen_actions = self.action_selector.select_action(agent_outputs[bs], avail_actions[bs], t_env, test_mode=test_mode)
+        return chosen_actions
+
+
+    def forward(self, ep_batch, t, test_mode=False, agent_id=None):
+
+        if agent_id is None:
+            # execute forward function from NonSharedMAC
+            return super().forward(ep_batch, t, test_mode)
+
         agent_inputs = self._build_inputs(ep_batch, t)
         avail_actions = ep_batch["avail_actions"][:, t]
         # modify agent forward function to take agent_id as input
         # this function should return the action output such that only agent_id agent rollouts using ...
         # ...batch of all agents (instead each agent_id corresponding to each agent in the batch, as done in NonSharedMAC)
         # e.g. agent_outs, self.hidden_states = self.agent(agent_inputs, self.hidden_states, agent_id)
-        agent_outs, self.hidden_states = self.agent(agent_inputs, self.hidden_states)
+        agent_outs, self.hidden_states = self.agent(agent_inputs, self.hidden_states, agent_id=agent_id)
 
         # Softmax the agent outputs if they're policy logits
         if self.agent_output_type == "pi_logits":

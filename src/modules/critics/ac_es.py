@@ -10,7 +10,7 @@ class ACCriticES(ACCriticNS):
 
     # Add a new forward function that accepts agent_id as an argument
     # This new forward function will only return the critic values with the critic for given agent_id
-    # e.g. def forward(self, batch, t=None, agent_id):
+
     def forward(self, batch, t=None, agent_id=None):
 
         if agent_id is None:

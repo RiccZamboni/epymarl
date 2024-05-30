@@ -11,7 +11,8 @@ class RNNESAgent(RNNNSAgent):
     def forward(self, inputs, hidden_state, agent_id=None):
 
         if agent_id is None:
-            raise ValueError("agent_id must be provided for RNNESAgent")
+            # implement forward function from RNNNSAgent
+            return super().forward(inputs, hidden_state)
         
         hiddens = []
         qs = []
