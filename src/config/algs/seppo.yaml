@@ -19,7 +19,7 @@ obs_last_action: False
 obs_individual_obs: False
 
 mac: "exp_share_mac"
-agent: "rnn_ns"
+agent: "rnn_es"
 agent_output_type: "pi_logits"
 learner: "seppo_learner"
 entropy_coef: 0.01
