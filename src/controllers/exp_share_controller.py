@@ -9,10 +9,9 @@ class ExpShareMAC(NonSharedMAC):
 
     def select_actions(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False, agent_id=None):
         if agent_id is None:
-            agent_id = 0 # TO BE CHANGED LATER: set to try exp sharing with agent_id 0
-            # # execute select_actions function from NonSharedMAC
-            # chosen_actions = super().select_actions(ep_batch, t_ep, t_env, bs, test_mode)
-            # return chosen_actions
+            # execute select_actions function from NonSharedMAC
+            chosen_actions = super().select_actions(ep_batch, t_ep, t_env, bs, test_mode)
+            return chosen_actions
         # Only select actions for the selected batch elements in bs
         avail_actions = ep_batch["avail_actions"][:, t_ep]
         agent_outputs = self.forward(ep_batch, t_ep, test_mode=test_mode, agent_id=agent_id )

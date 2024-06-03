@@ -59,7 +59,7 @@ class SEPPOLearner:
         old_mac_out = []
         self.old_mac.init_hidden(batch.batch_size)
         for t in range(batch.max_seq_length - 1):
-            agent_outs = self.old_mac.forward(batch, t=t, agent_id=0) # TO BE CHANGED LATER: try with agent_id=0 first
+            agent_outs = self.old_mac.forward(batch, t=t)
             old_mac_out.append(agent_outs)
         old_mac_out = th.stack(old_mac_out, dim=1)  # Concat over time
         old_pi = old_mac_out
@@ -68,54 +68,51 @@ class SEPPOLearner:
         old_pi_taken = th.gather(old_pi, dim=3, index=actions).squeeze(3)
         old_log_pi_taken = th.log(old_pi_taken + 1e-10)
 
-        # set total seppo_loss=0
-
         for k in range(self.args.epochs):
 
-        # add for loop loop over all agents
-        # e.g. for agent_id in range(n_agents)
+            seppo_loss=0
 
-            agent_id = 0  # try with agent_id 0 first, before the for loop implementation
+            # add for loop loop over all agents
+            for agent_id in range( self.args.n_agents):
 
-            mac_out = []
-            self.mac.init_hidden(batch.batch_size)
-            for t in range(batch.max_seq_length - 1):
-                # create forward loop in mac s.t it rollouts using given agent_id
-                # this forward loop creates agents_outs using the batch of all agents but with only agent_id (instead each agent_id rolling out barch data from each agent seprately as default behaviour in not-shared macs)
-                # e.g. agent_outs = self.mac.forward(batch, t=t, agent_id=agent_id)
-                agent_outs = self.mac.forward(batch, t=t, agent_id=agent_id )
-                mac_out.append(agent_outs)
-            mac_out = th.stack(mac_out, dim=1)  # Concat over time
+                mac_out = []
+                self.mac.init_hidden(batch.batch_size)
+                for t in range(batch.max_seq_length - 1):
+                    # create forward loop in mac s.t it rollouts using given agent_id
+                    # this forward loop creates agents_outs using the batch of all agents but with only agent_id (instead each agent_id rolling out barch data from each agent seprately as default behaviour in not-shared macs)
+                    # e.g. agent_outs = self.mac.forward(batch, t=t, agent_id=agent_id)
+                    agent_outs = self.mac.forward(batch, t=t, agent_id=agent_id )
+                    mac_out.append(agent_outs)
+                mac_out = th.stack(mac_out, dim=1)  # Concat over time
 
-            pi = mac_out
-            # create critic sqeuential such that only agent_id is used for training
-            # can be done by adding agent_id as an argument to the function
-            # e.g. advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards, critic_mask, agent_id)
-            advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
+                pi = mac_out
+                # create critic sqeuential such that only agent_id is used for training
+                # can be done by adding agent_id as an argument to the function
+                # e.g. advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards, critic_mask, agent_id)
+                advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
                                                                           critic_mask, agent_id)
-            advantages = advantages.detach()
-            # Calculate policy grad with mask
+                advantages = advantages.detach()
+                # Calculate policy grad with mask
 
-            pi[mask == 0] = 1.0
+                pi[mask == 0] = 1.0
 
-            pi_taken = th.gather(pi, dim=3, index=actions).squeeze(3)
-            log_pi_taken = th.log(pi_taken + 1e-10)
+                pi_taken = th.gather(pi, dim=3, index=actions).squeeze(3)
+                log_pi_taken = th.log(pi_taken + 1e-10)
 
-            ratios = th.exp(log_pi_taken - old_log_pi_taken.detach())
-            surr1 = ratios * advantages
-            surr2 = th.clamp(ratios, 1 - self.args.eps_clip, 1 + self.args.eps_clip) * advantages
+                ratios = th.exp(log_pi_taken - old_log_pi_taken.detach())
+                surr1 = ratios * advantages
+                surr2 = th.clamp(ratios, 1 - self.args.eps_clip, 1 + self.args.eps_clip) * advantages
 
-            entropy = -th.sum(pi * th.log(pi + 1e-10), dim=-1)
+                entropy = -th.sum(pi * th.log(pi + 1e-10), dim=-1)
 
-            # define lambda as a vector of ones of n_agents size
-            # e.g. lambda = th.ones(n_agents)
+                # define lambda as a vector of ones of n_agents size
+                lambda_vector = th.ones(self.args.n_agents)
 
-            # redefine pg_loss as agent-wise multiplication of lambda and pg_loss
+                # redefine pg_loss as agent-wise multiplication of lambda and pg_loss
+                pg_loss = -((th.min(surr1, surr2) + self.args.entropy_coef * entropy) * lambda_vector * mask).sum() / mask.sum()
 
-            pg_loss = -((th.min(surr1, surr2) + self.args.entropy_coef * entropy) * mask).sum() / mask.sum()
-
-            # add pg_loss to seppo_loss
-            # e.g. pg_loss = seppo_loss + pg_loss
+                # add pg_loss to seppo_loss
+                pg_loss = seppo_loss + pg_loss
 
             # The below part will be out of the for loops of agent_id
             # replace pg_loss with seppo_loss 
