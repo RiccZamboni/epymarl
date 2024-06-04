@@ -19,7 +19,7 @@ class RNN(nn.Module):
 
     def forward(self, inputs, max_t, bs):
         # make sure inputs are of the size (max_t, batch_size, input_shape)
-        inputs = inputs.view(max_t, bs, -1)
+        inputs = inputs.reshape(max_t, bs, -1)
         bs = inputs.size(1)
         h = self.init_hidden().repeat(bs, 1)
         qs = []
