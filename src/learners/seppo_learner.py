@@ -68,9 +68,24 @@ class SEPPOLearner:
         old_pi_taken = th.gather(old_pi, dim=3, index=actions).squeeze(3)
         old_log_pi_taken = th.log(old_pi_taken + 1e-10)
 
+        # critic stats dict to store each agent's critic stats
+        critic_train_stats_all = {}
+        # actor stats dict to store each agent's actor stats
+        actor_train_stats_all = {}
+
         for k in range(self.args.epochs):
 
             seppo_loss=0
+
+            actor_logs = {
+                    'clipped_loss',
+                    'entropy_loss',
+                    'is_ratio_mean'
+                    'agent_grad_norm',
+                    'advantages_mean'
+                    'pi_max'
+            }
+
 
             # add for loop loop over all agents
             for agent_id in range( self.args.n_agents):
@@ -91,6 +106,7 @@ class SEPPOLearner:
                 # e.g. advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards, critic_mask, agent_id)
                 advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
                                                                           critic_mask, agent_id)
+                critic_train_stats_all[agent_id] = critic_train_stats
                 advantages = advantages.detach()
                 # Calculate policy grad with mask
 
@@ -109,11 +125,17 @@ class SEPPOLearner:
                 lambda_vector = th.ones(self.args.n_agents)
 
                 # redefine pg_loss as agent-wise multiplication of lambda and pg_loss
-                pg_loss = -((th.min(surr1, surr2) + self.args.entropy_coef * entropy) * lambda_vector * mask).sum() / mask.sum()
+                clipped_loss = -((th.min(surr1, surr2)) * lambda_vector * mask).sum() / mask.sum()
+                entropy_loss = -((self.args.entropy_coef * entropy) * lambda_vector * mask).sum() / mask.sum()
+                pg_loss = clipped_loss + entropy_loss
 
                 # add pg_loss to seppo_loss
                 seppo_loss  = seppo_loss + pg_loss
 
+                # update actor log
+                actor_logs['clipped_loss'] = clipped_loss.item()
+                actor_logs['entropy_loss'] = entropy_loss.item()
+                
             # The below part will be out of the for loops of agent_id
             # replace pg_loss with seppo_loss 
 
@@ -122,6 +144,7 @@ class SEPPOLearner:
             seppo_loss.backward()
             grad_norm = th.nn.utils.clip_grad_norm_(self.agent_params, self.args.grad_norm_clip)
             self.agent_optimiser.step()
+
 
         self.old_mac.load_state(self.mac)
 
