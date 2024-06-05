@@ -78,14 +78,13 @@ class SEPPOLearner:
             seppo_loss=0
 
             actor_logs = {
-                    'clipped_loss',
-                    'entropy_loss',
-                    'is_ratio_mean'
-                    'agent_grad_norm',
-                    'advantages_mean'
-                    'pi_max'
+                    'clipped_loss': [],
+                    'entropy_loss': [],
+                    'is_ratio_mean': [],
+                    # 'agent_grad_norm': [],
+                    # 'advantages_mean': [],
+                    # 'pi_max': []
             }
-
 
             # add for loop loop over all agents
             for agent_id in range( self.args.n_agents):
@@ -132,9 +131,14 @@ class SEPPOLearner:
                 # add pg_loss to seppo_loss
                 seppo_loss  = seppo_loss + pg_loss
 
-                # update actor log
-                actor_logs['clipped_loss'] = clipped_loss.item()
-                actor_logs['entropy_loss'] = entropy_loss.item()
+                # update actor logs
+                actor_logs['clipped_loss'].append(clipped_loss.item())
+                actor_logs['entropy_loss'].append(entropy_loss.item())
+                actor_logs['is_ratio_mean'].append(ratios.mean().item())
+                # actor_logs['advantages_mean'].append((advantages * mask).sum().item() / mask.sum().item())
+                # actor_logs['pi_max'].append((pi.max(dim=-1)[0] * mask).sum().item() / mask.sum().item())
+                
+                actor_train_stats_all[agent_id] = actor_logs
                 
             # The below part will be out of the for loops of agent_id
             # replace pg_loss with seppo_loss 
@@ -158,14 +162,20 @@ class SEPPOLearner:
 
         # logging should be done for each agent_id
         if t_env - self.log_stats_t >= self.args.learner_log_interval:
-            ts_logged = len(critic_train_stats["critic_loss"])
-            for key in ["critic_loss", "critic_grad_norm", "td_error_abs", "q_taken_mean", "target_mean"]:
-                self.logger.log_stat(key, sum(critic_train_stats[key]) / ts_logged, t_env)
 
-            self.logger.log_stat("advantage_mean", (advantages * mask).sum().item() / mask.sum().item(), t_env)
-            self.logger.log_stat("pg_loss", pg_loss.item(), t_env)
-            self.logger.log_stat("agent_grad_norm", grad_norm.item(), t_env)
-            self.logger.log_stat("pi_max", (pi.max(dim=-1)[0] * mask).sum().item() / mask.sum().item(), t_env)
+            # critc logging
+            for agent_id in range(self.n_agents):               
+                critic_train_stats = critic_train_stats_all[agent_id]
+                ts_logged = len(critic_train_stats["critic_loss"])
+                for key in critic_train_stats:
+                    self.logger.log_stat('agent_'+str(agent_id)+'/'+key, sum(critic_train_stats[key]) / ts_logged, t_env)
+
+            # actor logging
+            for agent_id in range(self.n_agents):
+                actor_train_stats = actor_train_stats_all[agent_id]
+                for key in actor_logs:
+                    self.logger.log_stat('agent_'+str(agent_id)+'/'+key, actor_train_stats[key], t_env)
+
             self.log_stats_t = t_env
 
     def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, agent_id):
@@ -187,10 +197,10 @@ class SEPPOLearner:
 
         running_log = {
             "critic_loss": [],
-            "critic_grad_norm": [],
-            "td_error_abs": [],
-            "target_mean": [],
-            "q_taken_mean": [],
+            # "critic_grad_norm": [],
+            # "td_error_abs": [],
+            # "target_mean": [],
+            # "q_taken_mean": [],
         }
 
         # check if we really need the importance sampling for the critic (My guess is that we don't need it since there is no assumption that critic network expects data from the same distribution)
@@ -208,11 +218,11 @@ class SEPPOLearner:
         self.critic_optimiser.step()
 
         running_log["critic_loss"].append(loss.item())
-        running_log["critic_grad_norm"].append(grad_norm.item())
-        mask_elems = mask.sum().item()
-        running_log["td_error_abs"].append((masked_td_error.abs().sum().item() / mask_elems))
-        running_log["q_taken_mean"].append((v * mask).sum().item() / mask_elems)
-        running_log["target_mean"].append((target_returns * mask).sum().item() / mask_elems)
+        # running_log["critic_grad_norm"].append(grad_norm.item())
+        # mask_elems = mask.sum().item()
+        # running_log["td_error_abs"].append((masked_td_error.abs().sum().item() / mask_elems))
+        # running_log["q_taken_mean"].append((v * mask).sum().item() / mask_elems)
+        # running_log["target_mean"].append((target_returns * mask).sum().item() / mask_elems)
 
         return masked_td_error, running_log
 
