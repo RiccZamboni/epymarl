@@ -112,14 +112,14 @@ class SEPPOLearner:
                 pg_loss = -((th.min(surr1, surr2) + self.args.entropy_coef * entropy) * lambda_vector * mask).sum() / mask.sum()
 
                 # add pg_loss to seppo_loss
-                pg_loss = seppo_loss + pg_loss
+                seppo_loss  = seppo_loss + pg_loss
 
             # The below part will be out of the for loops of agent_id
             # replace pg_loss with seppo_loss 
 
             # Optimise agents
             self.agent_optimiser.zero_grad()
-            pg_loss.backward()
+            seppo_loss.backward()
             grad_norm = th.nn.utils.clip_grad_norm_(self.agent_params, self.args.grad_norm_clip)
             self.agent_optimiser.step()
 
