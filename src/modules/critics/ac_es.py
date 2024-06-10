@@ -15,16 +15,14 @@ class ACCriticES(ACCriticNS):
 
         if agent_id is None:
             raise ValueError("agent_id must be provided for ACCriticES")
-
+        
         inputs, bs, max_t = self._build_inputs(batch, t=t)
         qs = []
         for i in range(self.n_agents):
-            if self.args.use_critic_rnn:
-                q = self.critics[agent_id](inputs[:, :, i], max_t, bs)
-            else:
-                q = self.critics[agent_id](inputs[:, :, i])
+            q = self.critics[agent_id](inputs[:, :, i])
             qs.append(q.view(bs, max_t, 1, -1))
         q = th.cat(qs, dim=2)
         return q
+
     
 
