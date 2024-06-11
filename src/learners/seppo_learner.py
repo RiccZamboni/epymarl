@@ -70,8 +70,6 @@ class SEPPOLearner:
 
         # critic stats dict to store each agent's critic stats
         critic_train_stats_all = {}
-        # actor stats dict to store each agent's actor stats
-        actor_train_stats_all = {}
 
         for k in range(self.args.epochs):
 
@@ -137,9 +135,7 @@ class SEPPOLearner:
                 actor_logs['is_ratio_mean'].append(ratios.mean().item())
                 # actor_logs['advantages_mean'].append((advantages * mask).sum().item() / mask.sum().item())
                 # actor_logs['pi_max'].append((pi.max(dim=-1)[0] * mask).sum().item() / mask.sum().item())
-                
-                actor_train_stats_all[agent_id] = actor_logs
-                
+
             # The below part will be out of the for loops of agent_id
             # replace pg_loss with seppo_loss 
 
@@ -172,9 +168,8 @@ class SEPPOLearner:
 
             # actor logging
             for agent_id in range(self.n_agents):
-                actor_train_stats = actor_train_stats_all[agent_id]
                 for key in actor_logs:
-                    self.logger.log_stat('agent_'+str(agent_id)+'/'+key, actor_train_stats[key], t_env)
+                    self.logger.log_stat('agent_'+str(agent_id)+'/'+key, actor_logs[key][agent_id], t_env)
 
             self.log_stats_t = t_env
 
