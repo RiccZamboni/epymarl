@@ -98,21 +98,22 @@ class SEPPOLearner:
                 mac_out = th.stack(mac_out, dim=1)  # Concat over time
 
                 pi = mac_out
-                # create critic sqeuential such that only agent_id is used for training
-                # can be done by adding agent_id as an argument to the function
-                # e.g. advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards, critic_mask, agent_id)
-                advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
-                                                                          critic_mask, agent_id)
-                critic_train_stats_all[agent_id] = critic_train_stats
-                advantages = advantages.detach()
-                # Calculate policy grad with mask
-
                 pi[mask == 0] = 1.0
 
                 pi_taken = th.gather(pi, dim=3, index=actions).squeeze(3)
                 log_pi_taken = th.log(pi_taken + 1e-10)
 
                 ratios = th.exp(log_pi_taken - old_log_pi_taken.detach())
+
+                # create critic sqeuential such that only agent_id is used for training
+                # can be done by adding agent_id as an argument to the function
+                # e.g. advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards, critic_mask, agent_id)
+                advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
+                                                                          critic_mask, ratios, agent_id)
+                critic_train_stats_all[agent_id] = critic_train_stats
+                advantages = advantages.detach()
+                # Calculate policy grad with mask
+
                 surr1 = ratios * advantages
                 surr2 = th.clamp(ratios, 1 - self.args.eps_clip, 1 + self.args.eps_clip) * advantages
 
@@ -173,7 +174,7 @@ class SEPPOLearner:
 
             self.log_stats_t = t_env
 
-    def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, agent_id):
+    def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios, agent_id):
         # accept agent_id as an argument
 
         # check if we can keep this critic forward our of the for loop since the batch stays the same for all epochs 
@@ -205,6 +206,8 @@ class SEPPOLearner:
         v = critic(batch, agent_id=agent_id)[:, :-1].squeeze(3)
         td_error = (target_returns.detach() - v)
         masked_td_error = td_error * mask
+        if self.args.use_critic_importance_sampling:
+            masked_td_error = masked_td_error * ratios.detach()
         loss = (masked_td_error ** 2).sum() / mask.sum()
 
         self.critic_optimiser.zero_grad()

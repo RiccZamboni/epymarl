@@ -30,6 +30,7 @@ epochs: 4
 eps_clip: 0.2
 q_nstep: 5 # 1 corresponds to normal r + gammaV
 critic_type: "ac_critic_es"
+use_critic_importance_sampling: True # to add importance sampling weights on critic loss term
 name: "seppo"
 
 t_max: 20050000
