@@ -71,7 +71,13 @@ class SEPPOLearner:
         # critic stats dict to store each agent's critic stats
         critic_train_stats_all = {}
 
+        # add a boolean vector to continue training for each agent
+        continue_training = [True for _ in range(self.args.n_agents)]
+
         for k in range(self.args.epochs):
+
+            if not all(continue_training): # early stopping if kl_divergence is more than kl_target
+                break
 
             seppo_loss=0
 
@@ -86,6 +92,9 @@ class SEPPOLearner:
 
             # add for loop loop over all agents
             for agent_id in range( self.args.n_agents):
+
+                if not continue_training[agent_id]: # don't train agents with kl-div higher than kl_target
+                    continue
 
                 mac_out = []
                 self.mac.init_hidden(batch.batch_size)
@@ -103,7 +112,20 @@ class SEPPOLearner:
                 pi_taken = th.gather(pi, dim=3, index=actions).squeeze(3)
                 log_pi_taken = th.log(pi_taken + 1e-10)
 
-                ratios = th.exp(log_pi_taken - old_log_pi_taken.detach())
+                log_ratios = log_pi_taken - old_log_pi_taken.detach()
+                ratios = th.exp(log_ratios)
+
+                # compute approximated kl divergence between old policies of all agents and new policy of agent_id
+                with th.no_grad():
+                    approx_kl_div = ( (ratios - 1) - log_ratios ).mean(dim=(0,1)).detach().cpu().numpy()
+
+                # early stopping of training for agent_id if kl_divergence is too high 
+                # inspired from discussion on https://github.com/DLR-RM/stable-baselines3/issues/417
+                # derivation can be found in Schulman blog: http://joschu.net/blog/kl-approx.html
+                if self.args.kl_target is not None:
+                    if approx_kl_div.max() > 1.5*self.args.kl_target:
+                        self.logger.console_logger.info('Early stopping at epoch {} for agent id {}'.format(k+1, agent_id))
+                        continue_training[agent_id] = False
 
                 # create critic sqeuential such that only agent_id is used for training
                 # can be done by adding agent_id as an argument to the function
