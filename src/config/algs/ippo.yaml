@@ -26,7 +26,7 @@ entropy_coef: 0.01
 standardise_returns: False
 standardise_rewards: True
 use_rnn: True
-use_critic_rnn: True
+use_critic_rnn: False
 q_nstep: 5 # 1 corresponds to normal r + gammaV
 critic_type: "ac_critic"
 epochs: 4
@@ -34,3 +34,5 @@ eps_clip: 0.2
 name: "ippo"
 
 t_max: 20050000
+
+seed: 1

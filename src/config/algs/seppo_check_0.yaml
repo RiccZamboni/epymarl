@@ -10,11 +10,11 @@ batch_size_run: 10
 batch_size: 10
 
 # update the target network every {} training steps
-target_update_interval_or_tau: 200
+target_update_interval_or_tau: 0.01
 
 lr: 0.0003
 
-obs_agent_id: False
+obs_agent_id: True
 obs_last_action: False
 obs_individual_obs: False
 
@@ -25,12 +25,14 @@ learner: "seppo_learner"
 entropy_coef: 0.01
 standardise_returns: False
 standardise_rewards: True
-use_rnn: False
+use_rnn: True
 use_critic_rnn: False
-epochs: 4
-eps_clip: 0.2
 q_nstep: 5 # 1 corresponds to normal r + gammaV
 critic_type: "ac_critic_es"
+epochs: 4
+eps_clip: 0.2
 name: "seppo_check_0"
 
 t_max: 20050000
+
+seed: 1
