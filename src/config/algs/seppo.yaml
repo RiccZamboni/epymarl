@@ -1,4 +1,4 @@
-# --- IPPO NS specific parameters ---
+# --- SEPPO specific parameters ---
 
 action_selector: "soft_policies"
 mask_before_softmax: True
@@ -10,28 +10,31 @@ batch_size_run: 10
 batch_size: 10
 
 # update the target network every {} training steps
-target_update_interval_or_tau: 200
+target_update_interval_or_tau: 0.01
+
 
 lr: 0.0003
 
-obs_agent_id: False
+obs_agent_id: True
 obs_last_action: False
 obs_individual_obs: False
 
-mac: "exp_share_mac"
-agent: "rnn_es"
+# use IPPO
 agent_output_type: "pi_logits"
 learner: "seppo_learner"
 entropy_coef: 0.01
 standardise_returns: False
 standardise_rewards: True
-use_rnn: False
-epochs: 4
-eps_clip: 0.2
+use_rnn: True
 q_nstep: 5 # 1 corresponds to normal r + gammaV
 critic_type: "ac_critic_es"
-use_critic_importance_sampling: False # to add importance sampling weights on critic loss term
-kl_target: null # early stopping the training if kl_divergence go beyond kl_target
+epochs: 4
+eps_clip: 0.2
 name: "seppo"
 
 t_max: 20050000
+
+mac: "exp_share_mac"
+agent: "rnn_es"
+use_critic_importance_sampling: False # to add importance sampling weights on critic loss term
+kl_target: null # early stopping the training if kl_divergence go beyond kl_target
