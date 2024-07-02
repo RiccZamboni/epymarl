@@ -115,14 +115,13 @@ class SEPPOLearner:
                 log_ratios = log_pi_taken - old_log_pi_taken.detach()
                 ratios = th.exp(log_ratios)
 
-                # compute approximated kl divergence between old policies of all agents and new policy of agent_id
-                with th.no_grad():
-                    approx_kl_div = ( (ratios - 1) - log_ratios ).mean(dim=(0,1)).detach().cpu().numpy()
-
                 # early stopping of training for agent_id if kl_divergence is too high 
                 # inspired from discussion on https://github.com/DLR-RM/stable-baselines3/issues/417
                 # derivation can be found in Schulman blog: http://joschu.net/blog/kl-approx.html
                 if self.args.kl_target is not None:
+                    # compute approximated kl divergence between old policies of all agents and new policy of agent_id
+                    with th.no_grad():
+                        approx_kl_div = ( (ratios - 1) - log_ratios ).mean(dim=(0,1)).cpu().numpy()
                     if approx_kl_div.max() > 1.5*self.args.kl_target:
                         self.logger.console_logger.info('Early stopping at epoch {} for agent id {}'.format(k+1, agent_id))
                         continue_training[agent_id] = False
