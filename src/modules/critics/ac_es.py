@@ -27,4 +27,26 @@ class ACCriticES(ACCriticNS):
         q = th.cat(qs, dim=2)
         return q
     
+    # to match with shared networks update following functions
+    
+    def _build_inputs(self, batch, t=None):
+        bs = batch.batch_size
+        max_t = batch.max_seq_length if t is None else 1
+        ts = slice(None) if t is None else slice(t, t+1)
+        inputs = []
+        # observations
+        inputs.append(batch["obs"][:, ts])
+
+        inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1))
+
+        inputs = th.cat(inputs, dim=-1)
+        return inputs, bs, max_t
+
+    def _get_input_shape(self, scheme):
+        # observations
+        input_shape = scheme["obs"]["vshape"]
+        # agent id
+        input_shape += self.n_agents
+        return input_shape
+    
 

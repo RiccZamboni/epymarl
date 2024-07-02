@@ -22,6 +22,7 @@ class SEPPOLearner:
         self.agent_params = list(mac.parameters())
         self.agent_optimiser = Adam(params=self.agent_params, lr=args.lr)
 
+        th.manual_seed(args.seed)
         self.critic = critic_resigtry[args.critic_type](scheme, args)
         self.target_critic = copy.deepcopy(self.critic)
 
@@ -37,6 +38,8 @@ class SEPPOLearner:
             self.ret_ms = RunningMeanStd(shape=(self.n_agents, ), device=device)
         if self.args.standardise_rewards:
             self.rew_ms = RunningMeanStd(shape=(1,), device=device)
+        
+        th.manual_seed(args.seed)
 
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
         # Get the relevant quantities

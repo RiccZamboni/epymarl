@@ -40,7 +40,7 @@ class ACCritic(nn.Module):
                 h = self.rnn(x, h)
             else:
                 h = F.relu(self.rnn(x))
-            q = self.fc3(x)
+            q = self.fc3(h)
             qs.append(q)
         q = th.stack(qs).view(bs, max_t, self.n_agents, 1)
         return q
