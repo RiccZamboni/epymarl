@@ -228,8 +228,9 @@ class SEPPOLearner:
         td_error = (target_returns.detach() - v)
         masked_td_error = td_error * mask
         if self.args.use_critic_importance_sampling:
-            masked_td_error = masked_td_error * ratios.detach()
-        loss = (masked_td_error ** 2).sum() / mask.sum()
+            loss = ( (masked_td_error**2) * ratios.detach() ).sum() / mask.sum()
+        else:
+            loss = (masked_td_error**2).sum() / mask.sum()
 
         self.critic_optimiser.zero_grad()
         loss.backward()
