@@ -90,6 +90,10 @@ class SEPPOLearner:
                     # 'pi_max': []
             }
 
+            # set logs for kl_dive among agents
+            for agent_id in range( self.args.n_agents):
+                actor_logs['kl_with_agent_'+str(agent_id)] = []
+
             # add for loop loop over all agents
             for agent_id in range( self.args.n_agents):
 
@@ -121,7 +125,7 @@ class SEPPOLearner:
                 if self.args.kl_target is not None:
                     # compute approximated kl divergence between old policies of all agents and new policy of agent_id
                     with th.no_grad():
-                        approx_kl_div = ( (ratios - 1) - log_ratios ).mean(dim=(0,1)).cpu().numpy()
+                        approx_kl_div = ( (ratios - 1) - log_ratios ).mean(dim=(0,1)).detach()
                     if approx_kl_div.max() > 1.5*self.args.kl_target:
                         self.logger.console_logger.info('Early stopping at epoch {} for agent id {}'.format(k+1, agent_id))
                         continue_training[agent_id] = False
@@ -155,6 +159,8 @@ class SEPPOLearner:
                 actor_logs['clipped_loss'].append(clipped_loss.item())
                 actor_logs['entropy_loss'].append(entropy_loss.item())
                 actor_logs['is_ratio_mean'].append(ratios.mean().item())
+                for i,kl in enumerate(approx_kl_div):
+                    actor_logs['kl_with_agent_'+str(i)].append(kl.item())
                 # actor_logs['advantages_mean'].append((advantages * mask).sum().item() / mask.sum().item())
                 # actor_logs['pi_max'].append((pi.max(dim=-1)[0] * mask).sum().item() / mask.sum().item())
 
