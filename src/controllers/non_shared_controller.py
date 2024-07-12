@@ -25,6 +25,11 @@ class NonSharedMAC:
         agent_inputs = self._build_inputs(ep_batch, t)
         avail_actions = ep_batch["avail_actions"][:, t]
         agent_outs, self.hidden_states = self.agent(agent_inputs, self.hidden_states)
+        # print('agent_outs[:50]', agent_outs[:10])
+        # print('agent_outs[50:100]', agent_outs[10:20])
+        # print('agent_outs[100:150]', agent_outs[20:30])
+        # print('agent_outs[150:200]', agent_outs[30:40])
+        # print('agent_outs[200:250]', agent_outs[40:50])
 
         # Softmax the agent outputs if they're policy logits
         if self.agent_output_type == "pi_logits":
