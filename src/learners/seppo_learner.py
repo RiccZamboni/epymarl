@@ -8,9 +8,10 @@ import torch as th
 from torch.optim import Adam
 from modules.critics import REGISTRY as critic_resigtry
 from components.standarize_stream import RunningMeanStd
+from learners.ppo_learner import PPOLearner
 
 
-class SEPPOLearner:
+class SEPPOLearner(PPOLearner):
     def __init__(self, mac, scheme, logger, args):
         self.args = args
         self.n_agents = args.n_agents
@@ -66,12 +67,13 @@ class SEPPOLearner:
         old_pi_taken = th.gather(old_pi, dim=3, index=actions).squeeze(3)
         old_log_pi_taken = th.log(old_pi_taken + 1e-10)
 
-        # repeat rewards, old_log_pi_taken, actions, mask to have shape (n_agents, nstep, eplength, n_agents)
-        # to match data of all agents being fed through each agent's network in single batch
-        rewards = rewards.unsqueeze(0).repeat(self.n_agents, 1, 1, 1)
-        old_log_pi_taken = old_log_pi_taken.unsqueeze(0).repeat(self.n_agents, 1, 1, 1)
-        actions = actions.unsqueeze(0).repeat(self.n_agents, 1, 1, 1, 1)
-        mask = mask.unsqueeze(0).repeat(self.n_agents, 1, 1, 1)
+        # reshape/ repeat from (batch_size, eplength, n_agents) to (batch_size, eplength, n_agents, n_agents)
+        # to match data of all agents being fed through each agent's network in single batch with
+        # entry [:, :, i, :] being the data of agent i
+        rewards = rewards.unsqueeze(-1).repeat(1, 1, 1, self.n_agents)
+        old_log_pi_taken = old_log_pi_taken.unsqueeze(-1).repeat(1, 1, 1, self.n_agents)
+        actions = actions.unsqueeze(-2).repeat(1, 1, 1, self.n_agents, 1)
+        mask = mask.unsqueeze(-1).repeat(1, 1, 1, self.n_agents)
 
         critic_mask = mask.clone()
 
@@ -106,7 +108,7 @@ class SEPPOLearner:
                 # e.g. agent_outs = self.mac.forward(batch, t=t, agent_id=agent_id)
                 agent_outs = self.mac.forward( batch, t=t, all_agents=True )
                 mac_out.append(agent_outs)
-            mac_out = th.stack(mac_out, dim=2)  # Concat over time
+            mac_out = th.stack(mac_out, dim=1)  # Concat over time
 
             pi = mac_out
             pi[mask == 0] = 1.0
@@ -163,8 +165,8 @@ class SEPPOLearner:
         # log pg_loss, entropy_loss, is_ratios_mean for each agent_id
         for agent_id in range(self.n_agents):
 
-            clipped_loss_log = (surr1[agent_id] * lambda_vector[agent_id] * mask[agent_id]).sum() / mask[agent_id].sum()
-            entropy_loss_log = (self.args.entropy_coef * entropy[agent_id] * lambda_vector[agent_id] * mask[agent_id]).sum() / mask[agent_id].sum()
+            clipped_loss_log = (surr1[:,:,agent_id,:] * lambda_vector * mask[:,:,agent_id,:]).sum() / mask[:,:,agent_id,:].sum()
+            entropy_loss_log = (self.args.entropy_coef * entropy[:,:,agent_id,:] * lambda_vector * mask[:,:,agent_id,:]).sum() / mask[agent_id].sum()
             is_ratio_mean_log = ratios[agent_id].mean().item()
 
             actor_logs['clipped_loss'].append(clipped_loss_log.item())
@@ -227,7 +229,7 @@ class SEPPOLearner:
 
         # critic forward function needs to be modified to accept agent_id as an argument
         # This new forward function will only return the critic values with the critic for given agent_id
-        v = critic(batch)[:, :, :-1].squeeze(-1)
+        v = critic(batch)[:, :-1].squeeze(-1)
         td_error = (target_returns.detach() - v)
         masked_td_error = td_error * mask
         if self.args.use_critic_importance_sampling:
@@ -258,62 +260,3 @@ class SEPPOLearner:
         # running_log["target_mean"].append((target_returns * mask).sum().item() / mask_elems)
 
         return masked_td_error, running_log
-
-    def nstep_returns(self, rewards, mask, values, nsteps):
-        ep_length = rewards.size(2)
-        nstep_values = th.zeros_like(values[:, :, :-1])
-        for t_start in range(ep_length):
-            nstep_return_t = th.zeros_like(values[:, :, 0])
-            for step in range(nsteps + 1):
-                t = t_start + step
-                if t >= ep_length:
-                    break
-                elif step == nsteps:
-                    nstep_return_t += (
-                        self.args.gamma**step * values[:, :, t] * mask[:, :, t]
-                    )
-                elif t == ep_length - 1 and self.args.add_value_last_step:
-                    nstep_return_t += (
-                        self.args.gamma**step * rewards[:, :, t] * mask[:, :, t]
-                    )
-                    nstep_return_t += (
-                        self.args.gamma ** (step + 1) * values[:, :, t + 1]
-                    )
-                else:
-                    nstep_return_t += (
-                        self.args.gamma**step * rewards[:, :, t] * mask[:, :, t]
-                    )
-            nstep_values[:, :, t_start, :] = nstep_return_t
-        return nstep_values
-
-    def _update_targets(self):
-        self.target_critic.load_state_dict(self.critic.state_dict())
-
-    def _update_targets_hard(self):
-        self.target_critic.load_state_dict(self.critic.state_dict())
-
-    def _update_targets_soft(self, tau):
-        for target_param, param in zip(self.target_critic.parameters(), self.critic.parameters()):
-            target_param.data.copy_(target_param.data * (1.0 - tau) + param.data * tau)
-
-    def cuda(self):
-        self.old_mac.cuda()
-        self.mac.cuda()
-        self.critic.cuda()
-        self.target_critic.cuda()
-
-    def save_models(self, path):
-        self.mac.save_models(path)
-        th.save(self.critic.state_dict(), "{}/critic.th".format(path))
-        th.save(self.agent_optimiser.state_dict(), "{}/agent_opt.th".format(path))
-        th.save(self.critic_optimiser.state_dict(), "{}/critic_opt.th".format(path))
-
-    def load_models(self, path):
-        self.mac.load_models(path)
-        self.critic.load_state_dict(th.load("{}/critic.th".format(path), map_location=lambda storage, loc: storage))
-        # Not quite right but I don't want to save target networks
-        self.target_critic.load_state_dict(self.critic.state_dict())
-        self.agent_optimiser.load_state_dict(
-            th.load("{}/agent_opt.th".format(path), map_location=lambda storage, loc: storage))
-        self.critic_optimiser.load_state_dict(
-            th.load("{}/critic_opt.th".format(path), map_location=lambda storage, loc: storage))

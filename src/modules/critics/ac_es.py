@@ -12,10 +12,9 @@ class ACCriticES(ACCriticNS):
         inputs, bs, max_t = self._build_inputs(batch, t=t)
         qs = []
         for i in range(self.n_agents):
-            q = self.critics[i](inputs[:, :, i])
-            qs.append(q.view(bs * self.n_agents, max_t, 1, -1))
-        q = th.cat(qs, dim=-2)
-        return q.reshape(self.n_agents, bs, max_t, self.n_agents, -1)
+            q = self.critics[i](inputs[:, :, :, i])
+            qs.append(q.view(bs, max_t, self.n_agents, -1))
+        return th.stack(qs, dim=-2)
 
     def _build_inputs(self, batch, t=None):
         bs = batch.batch_size
@@ -26,11 +25,7 @@ class ACCriticES(ACCriticNS):
         # in a single batch
         # reshape from (batch_size, ep_length + 1, n_agents, obs_shape)
         # to (n_agents * batch_size, ep_length + 1, n_agents, obs_shape)
-        inputs = (
-            inputs.unsqueeze(0)
-            .repeat(self.n_agents, 1, 1, 1, 1)
-            .reshape(self.n_agents * bs, max_t, self.n_agents, -1)
-        )
+        inputs = inputs.unsqueeze(-2).repeat(1, 1, 1, self.n_agents, 1)
         return inputs, bs, max_t
     
 

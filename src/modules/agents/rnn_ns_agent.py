@@ -29,11 +29,12 @@ class RNNNSAgent(nn.Module):
                 q, h = self.agents[i](inputs[:, i], hidden_state[:, i])
                 hiddens.append(h.unsqueeze(1))
                 qs.append(q.unsqueeze(1))
+            out_dim = qs[0].size(-1)
             # print('q shape', qs[0].shape)
             # print('q size', q.shape)
             # for i,q in enumerate(qs):
             #     print(f"Agent {i} Q-values: {q}")
-            return th.cat(qs, dim=-1).view(-1, q.size(-1)), th.cat(hiddens, dim=1)
+            return th.cat(qs, dim=1).view(-1, out_dim), th.cat(hiddens, dim=1)
         
     # create another forward loop for exprience sharing which takes agent_id as additional input
     # This function should return the action output such that only agent_id agent rollouts using ...
