@@ -77,13 +77,13 @@ class SEPPOLearner(PPOLearner):
 
         critic_mask = mask.clone()
 
-        # # add a boolean vector to continue training for each agent
-        # continue_training = [True for _ in range(self.args.n_agents)]
+        # add a vector of ones of n_agents size to track kl_target violation for each agent
+        kl_within_target = th.ones(self.n_agents)
 
         for k in range(self.args.epochs):
 
-            # if not all(continue_training): # early stopping if kl_divergence is more than kl_target
-            #     break
+            if not any(kl_within_target): # early stopping if kl_divergence for all agents is more than kl_target
+                break
 
             actor_logs = {
                     'clipped_loss': [],
@@ -94,18 +94,9 @@ class SEPPOLearner(PPOLearner):
                     # 'pi_max': []
             }
 
-            
-            # if not continue_training[agent_id]: # don't train agents with kl-div higher than kl_target
-            #     continue
-
-            agent_id=-1
-
             mac_out = []
             self.mac.init_hidden(batch.batch_size * self.n_agents)
             for t in range(batch.max_seq_length - 1):
-                # create forward loop in mac s.t it rollouts using given agent_id
-                # this forward loop creates agents_outs using the batch of all agents but with only agent_id (instead each agent_id rolling out barch data from each agent seprately as default behaviour in not-shared macs)
-                # e.g. agent_outs = self.mac.forward(batch, t=t, agent_id=agent_id)
                 agent_outs = self.mac.forward( batch, t=t, all_agents=True )
                 mac_out.append(agent_outs)
             mac_out = th.stack(mac_out, dim=1)  # Concat over time
@@ -119,22 +110,18 @@ class SEPPOLearner(PPOLearner):
             log_ratios = log_pi_taken - old_log_pi_taken.detach()
             ratios = th.exp(log_ratios)
 
-            # print('ratios', ratios.size())
+            # early stopping of training for agent_id if kl_divergence is too high 
+            # inspired from discussion on https://github.com/DLR-RM/stable-baselines3/issues/417
+            # derivation can be found in Schulman blog: http://joschu.net/blog/kl-approx.html
+            if self.args.kl_target is not None:
+                # compute approximated kl divergence between old policies of all agents and new policy of agent_id
+                with th.no_grad():
+                    for agent_id in range(self.n_agents):
+                        approx_kl_div = ( (ratios[:,:,agent_id,:] - 1) - log_ratios[:,:,agent_id,:] ).mean(dim=(0,1)).cpu().numpy()
+                        if approx_kl_div.max() > 1.5*self.args.kl_target:
+                            self.logger.console_logger.info('Early stopping at epoch {} for agent id {}'.format(k+1, agent_id))
+                            kl_within_target[agent_id] = 0
 
-            # # early stopping of training for agent_id if kl_divergence is too high 
-            # # inspired from discussion on https://github.com/DLR-RM/stable-baselines3/issues/417
-            # # derivation can be found in Schulman blog: http://joschu.net/blog/kl-approx.html
-            # if self.args.kl_target is not None:
-            #     # compute approximated kl divergence between old policies of all agents and new policy of agent_id
-            #     with th.no_grad():
-            #         approx_kl_div = ( (ratios - 1) - log_ratios ).mean(dim=(0,1)).cpu().numpy()
-            #     if approx_kl_div.max() > 1.5*self.args.kl_target:
-            #         self.logger.console_logger.info('Early stopping at epoch {} for agent id {}'.format(k+1, agent_id))
-            #         continue_training[agent_id] = False
-
-            # create critic sqeuential such that only agent_id is used for training
-            # can be done by adding agent_id as an argument to the function
-            # e.g. advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards, critic_mask, agent_id)
             advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
                                                                       critic_mask, ratios)
             advantages = advantages.detach()
@@ -145,16 +132,13 @@ class SEPPOLearner(PPOLearner):
 
             entropy = -th.sum(pi * th.log(pi + 1e-10), dim=-1)
 
-            # define lambda as a vector of ones of n_agents size
-            lambda_vector = th.ones(self.args.n_agents)
+            # define lambda as a vector of ones of n_agents size (later, will be given as the parameter in the config)
+            lambda_vector = th.ones(self.n_agents)
 
-            # redefine pg_loss as agent-wise multiplication of lambda and pg_loss
-            clipped_loss = -((th.min(surr1, surr2)) * lambda_vector * mask).sum() / mask.sum()
-            entropy_loss = -((self.args.entropy_coef * entropy) * lambda_vector * mask).sum() / mask.sum()
+            # redefine losses as agent-wise multiplication of lambda and losses
+            clipped_loss = -((th.min(surr1, surr2)) * lambda_vector.view(1,1,-1,1) * kl_within_target.view(1,1,-1,1) * mask).sum() / mask.sum()
+            entropy_loss = -((self.args.entropy_coef * entropy) * lambda_vector.view(1,1,-1,1) * kl_within_target.view(1,1,-1,1) * mask).sum() / mask.sum()
             pg_loss = clipped_loss + entropy_loss
-
-            # The below part will be out of the for loops of agent_id
-            # replace pg_loss with seppo_loss 
 
             # Optimise agents
             self.agent_optimiser.zero_grad()
@@ -165,14 +149,13 @@ class SEPPOLearner(PPOLearner):
         # log pg_loss, entropy_loss, is_ratios_mean for each agent_id
         for agent_id in range(self.n_agents):
 
-            clipped_loss_log = (surr1[:,:,agent_id,:] * lambda_vector * mask[:,:,agent_id,:]).sum() / mask[:,:,agent_id,:].sum()
-            entropy_loss_log = (self.args.entropy_coef * entropy[:,:,agent_id,:] * lambda_vector * mask[:,:,agent_id,:]).sum() / mask[agent_id].sum()
-            is_ratio_mean_log = ratios[agent_id].mean().item()
+            clipped_loss_log = (surr1[:,:,agent_id,:] * lambda_vector[agent_id] * kl_within_target[agent_id]  * mask[:,:,agent_id,:]).sum() / mask[:,:,agent_id,:].sum()
+            entropy_loss_log = (self.args.entropy_coef * entropy[:,:,agent_id,:] * lambda_vector[agent_id] * kl_within_target[agent_id] * mask[:,:,agent_id,:]).sum() / mask[agent_id].sum()
+            is_ratio_mean_log = ratios[:,:,agent_id,:].mean().item()
 
             actor_logs['clipped_loss'].append(clipped_loss_log.item())
             actor_logs['entropy_loss'].append(entropy_loss_log.item())
             actor_logs['is_ratio_mean'].append(is_ratio_mean_log)
-
 
         self.old_mac.load_state(self.mac)
 
@@ -198,12 +181,10 @@ class SEPPOLearner(PPOLearner):
                     for key in actor_logs:
                         self.logger.log_stat('agent_'+str(agent_id)+'/'+key, actor_logs[key][agent_id], t_env)
 
-            self.log_stats_t = t_env
+                self.log_stats_t = t_env
 
     def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios):
-        # accept agent_id as an argument
 
-        # check if we can keep this critic forward our of the for loop since the batch stays the same for all epochs 
         # Optimise critic
         with th.no_grad():
             target_vals = target_critic(batch)
@@ -225,10 +206,7 @@ class SEPPOLearner(PPOLearner):
             # "q_taken_mean": [],
         }
 
-        # check if we really need the importance sampling for the critic (My guess is that we don't need it since there is no assumption that critic network expects data from the same distribution)
 
-        # critic forward function needs to be modified to accept agent_id as an argument
-        # This new forward function will only return the critic values with the critic for given agent_id
         v = critic(batch)[:, :-1].squeeze(-1)
         td_error = (target_returns.detach() - v)
         masked_td_error = td_error * mask
