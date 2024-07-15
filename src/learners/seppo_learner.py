@@ -122,8 +122,11 @@ class SEPPOLearner(PPOLearner):
                             self.logger.console_logger.info('Early stopping at epoch {} for agent id {}'.format(k+1, agent_id))
                             kl_within_target[agent_id] = 0
 
+            # define lambda as a vector of ones of n_agents size (later, will be given as the parameter in the config)
+            lambda_vector = th.ones(self.n_agents)
+
             advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
-                                                                      critic_mask, ratios)
+                                                                      critic_mask, ratios, lambda_vector, kl_within_target)
             advantages = advantages.detach()
             # Calculate policy grad with mask
 
@@ -131,9 +134,6 @@ class SEPPOLearner(PPOLearner):
             surr2 = th.clamp(ratios, 1 - self.args.eps_clip, 1 + self.args.eps_clip) * advantages
 
             entropy = -th.sum(pi * th.log(pi + 1e-10), dim=-1)
-
-            # define lambda as a vector of ones of n_agents size (later, will be given as the parameter in the config)
-            lambda_vector = th.ones(self.n_agents)
 
             # redefine losses as agent-wise multiplication of lambda and losses
             clipped_loss = -((th.min(surr1, surr2)) * lambda_vector.view(1,1,-1,1) * kl_within_target.view(1,1,-1,1) * mask).sum() / mask.sum()
@@ -183,7 +183,7 @@ class SEPPOLearner(PPOLearner):
 
                 self.log_stats_t = t_env
 
-    def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios):
+    def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios, lambda_vector, kl_within_target):
 
         # Optimise critic
         with th.no_grad():
@@ -214,16 +214,16 @@ class SEPPOLearner(PPOLearner):
             # log critic loss for each agent
             with th.no_grad():
                 for agent_id in range(self.n_agents):
-                    agent_loss = ( (masked_td_error[agent_id]**2) * ratios[agent_id].detach() ).sum() / mask[agent_id].sum()
+                    agent_loss = ( (masked_td_error[:,:,agent_id,:]**2) * ratios[:,:,agent_id,:].detach() * lambda_vector[agent_id] * kl_within_target[agent_id] ).sum() / mask[:,:,agent_id,:].sum()
                     running_log["critic_loss"].append(agent_loss.item())
-            loss = ( (masked_td_error**2) * ratios.detach() ).sum() / mask.sum()
+            loss = ( (masked_td_error**2) * ratios.detach() * lambda_vector.view(1,1,-1,1) * kl_within_target.view(1,1,-1,1) ).sum() / mask.sum()
         else:
             # log critic loss for each agent
             with th.no_grad():
                 for agent_id in range(self.n_agents):
-                    agent_loss = (masked_td_error[agent_id] ** 2).sum() / mask[agent_id].sum()
+                    agent_loss = ( (masked_td_error[:,:,agent_id,:] ** 2 ) * lambda_vector[agent_id] * kl_within_target[agent_id] ).sum() / mask[:,:,agent_id,:].sum()
                     running_log["critic_loss"].append(agent_loss.item())
-            loss = (masked_td_error**2).sum() / mask.sum()
+            loss = ( (masked_td_error**2) * lambda_vector.view(1,1,-1,1) * kl_within_target.view(1,1,-1,1)  ).sum() / mask.sum()
 
         self.critic_optimiser.zero_grad()
         loss.backward()
