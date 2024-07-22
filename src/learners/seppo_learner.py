@@ -216,7 +216,8 @@ class SEPPOLearner(PPOLearner):
                 for agent_id in range(self.n_agents):
                     agent_loss = ( (masked_td_error[:,:,agent_id,:]**2) * ratios[:,:,agent_id,:].detach() * lambda_vector[agent_id] * kl_within_target[agent_id] ).sum() / mask[:,:,agent_id,:].sum()
                     running_log["critic_loss"].append(agent_loss.item())
-            loss = ( (masked_td_error**2) * ratios.detach() * lambda_vector.view(1,1,-1,1) * kl_within_target.view(1,1,-1,1) ).sum() / mask.sum()
+            clamped_ratio = th.clamp(ratios.detach(), 1 - self.args.eps_clip, 1 + self.args.eps_clip)
+            loss = ( (masked_td_error**2) * clamped_ratio * lambda_vector.view(1,1,-1,1) * kl_within_target.view(1,1,-1,1) ).sum() / mask.sum()
         else:
             # log critic loss for each agent
             with th.no_grad():
