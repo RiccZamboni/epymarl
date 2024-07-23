@@ -38,7 +38,7 @@ class ExpShareMAC(NonSharedMAC):
         # return action logits as (batch_size * n_agents * n_agents, n_actions)
         # and hidden states as (batch_size * n_agents, n_agents, hidden_size)
         agent_outs, self.hidden_states = self.agent(agent_inputs, self.hidden_states)
-        agent_outs = agent_outs.view(ep_batch.batch_size, self.n_agents, self.n_agents, -1)
+        agent_outs = agent_outs.view(self.n_agents, ep_batch.batch_size, self.n_agents, -1).transpose(0,1)
 
         # print('agent_outs[:50]', agent_outs[:50])
         # print('agent_outs[50:100]', agent_outs[50:100])
