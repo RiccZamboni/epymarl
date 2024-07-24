@@ -150,7 +150,7 @@ class SEPPOLearner(PPOLearner):
         for agent_id in range(self.n_agents):
 
             clipped_loss_log = (surr1[:,:,agent_id,:] * lambda_vector[agent_id] * kl_within_target[agent_id]  * mask[:,:,agent_id,:]).sum() / mask[:,:,agent_id,:].sum()
-            entropy_loss_log = (self.args.entropy_coef * entropy[:,:,agent_id,:] * lambda_vector[agent_id] * kl_within_target[agent_id] * mask[:,:,agent_id,:]).sum() / mask[agent_id].sum()
+            entropy_loss_log = (self.args.entropy_coef * entropy[:,:,agent_id,:] * lambda_vector[agent_id] * kl_within_target[agent_id] * mask[:,:,agent_id,:]).sum() / mask[:,:,agent_id,:].sum()
             is_ratio_mean_log = ratios[:,:,agent_id,:].mean().item()
 
             actor_logs['clipped_loss'].append(clipped_loss_log.item())
