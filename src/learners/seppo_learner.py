@@ -94,6 +94,10 @@ class SEPPOLearner(PPOLearner):
                     # 'pi_max': []
             }
 
+            # set logs for kl_div among agents
+            for agent_id in range( self.n_agents):
+                actor_logs['kl_with_agent_'+str(agent_id)] = []
+
             mac_out = []
             self.mac.init_hidden(batch.batch_size * self.n_agents)
             for t in range(batch.max_seq_length - 1):
@@ -116,8 +120,10 @@ class SEPPOLearner(PPOLearner):
             if self.args.kl_target is not None:
                 # compute approximated kl divergence between old policies of all agents and new policy of agent_id
                 with th.no_grad():
+                    kl_matrix = []
                     for agent_id in range(self.n_agents):
                         approx_kl_div = ( (ratios[:,:,agent_id,:] - 1) - log_ratios[:,:,agent_id,:] ).mean(dim=(0,1)).cpu().numpy()
+                        kl_matrix.append(approx_kl_div)
                         if approx_kl_div.max() > 1.5*self.args.kl_target:
                             self.logger.console_logger.info('Early stopping at epoch {} for agent id {}'.format(k+1, agent_id))
                             kl_within_target[agent_id] = 0
@@ -156,6 +162,9 @@ class SEPPOLearner(PPOLearner):
             actor_logs['clipped_loss'].append(clipped_loss_log.item())
             actor_logs['entropy_loss'].append(entropy_loss_log.item())
             actor_logs['is_ratio_mean'].append(is_ratio_mean_log)
+
+            for kl in kl_matrix[agent_id]:
+                actor_logs['kl_with_agent_'+str(agent_id)].append(kl)
 
         self.old_mac.load_state(self.mac)
 
