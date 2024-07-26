@@ -92,8 +92,9 @@ class SEPPOLearner(PPOLearner):
                 break
 
             # set logs for kl_div among agents
-            for agent_id in range( self.n_agents):
-                actor_logs['kl_with_agent_'+str(agent_id)+'_epoch_'+str(k)] = []
+            if self.args.kl_target is not None:
+                for agent_id in range( self.n_agents):
+                    actor_logs['kl_with_agent_'+str(agent_id)+'_epoch_'+str(k)] = []
 
             mac_out = []
             self.mac.init_hidden(batch.batch_size * self.n_agents)
