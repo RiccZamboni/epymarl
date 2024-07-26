@@ -77,7 +77,13 @@ class SEPPOLearner(PPOLearner):
 
         critic_mask = mask.clone()
 
-        # add a vector of ones of n_agents size to track kl_target violation for each agent
+        actor_logs = {
+                'clipped_loss': [],
+                'entropy_loss': [],
+                'is_ratio_mean': [],
+        }
+
+        # create a vector of ones of n_agents size to track kl_target violation for each agent
         kl_within_target = th.ones(self.n_agents)
 
         for k in range(self.args.epochs):
@@ -85,18 +91,9 @@ class SEPPOLearner(PPOLearner):
             if not any(kl_within_target): # early stopping if kl_divergence for all agents is more than kl_target
                 break
 
-            actor_logs = {
-                    'clipped_loss': [],
-                    'entropy_loss': [],
-                    'is_ratio_mean': [],
-                    # 'agent_grad_norm': [],
-                    # 'advantages_mean': [],
-                    # 'pi_max': []
-            }
-
             # set logs for kl_div among agents
             for agent_id in range( self.n_agents):
-                actor_logs['kl_with_agent_'+str(agent_id)] = []
+                actor_logs['kl_with_agent_'+str(agent_id)+'_epoch_'+str(k)] = []
 
             mac_out = []
             self.mac.init_hidden(batch.batch_size * self.n_agents)
@@ -118,15 +115,23 @@ class SEPPOLearner(PPOLearner):
             # inspired from discussion on https://github.com/DLR-RM/stable-baselines3/issues/417
             # derivation can be found in Schulman blog: http://joschu.net/blog/kl-approx.html
             if self.args.kl_target is not None:
-                # compute approximated kl divergence between old policies of all agents and new policy of agent_id
+                # compute approximated kl divergence among all agents 
                 with th.no_grad():
-                    kl_matrix = []
-                    for agent_id in range(self.n_agents):
-                        approx_kl_div = ( (ratios[:,:,agent_id,:] - 1) - log_ratios[:,:,agent_id,:] ).mean(dim=(0,1)).cpu().numpy()
-                        kl_matrix.append(approx_kl_div)
-                        if approx_kl_div.max() > 1.5*self.args.kl_target:
-                            self.logger.console_logger.info('Early stopping at epoch {} for agent id {}'.format(k+1, agent_id))
-                            kl_within_target[agent_id] = 0
+                    kl_matrix = th.zeros(self.n_agents, self.n_agents)
+                    for agent_id_i in range(self.n_agents):
+                        for agent_id_j in range(self.n_agents):
+                            log_ratios_ij = log_ratios[:,:,:,agent_id_i] - log_ratios[:,:,:,agent_id_j]
+                            ratios_ij = th.exp(log_ratios_ij)
+                            kl_matrix[agent_id_i, agent_id_j] = ( (ratios_ij - 1) - log_ratios_ij ).mean()
+
+                        # check if kl_divergence is within target for each agent_id_i
+                        if kl_matrix[agent_id_i,:].max() > 1.5*self.args.kl_target:
+                            self.logger.console_logger.info('Early stopping at epoch {} for agent id {}'.format(k+1, agent_id_i))
+                            kl_within_target[agent_id_i] = 0
+
+                        # log kl_divergence for each agent_id_i
+                        for kl in kl_matrix[agent_id_i]:
+                            actor_logs['kl_with_agent_'+str(agent_id_i)+'_epoch_'+str(k)].append(kl.item())
 
             # define lambda as a vector of ones of n_agents size (later, will be given as the parameter in the config)
             lambda_vector = th.ones(self.n_agents)
@@ -162,9 +167,6 @@ class SEPPOLearner(PPOLearner):
             actor_logs['clipped_loss'].append(clipped_loss_log.item())
             actor_logs['entropy_loss'].append(entropy_loss_log.item())
             actor_logs['is_ratio_mean'].append(is_ratio_mean_log)
-
-            for kl in kl_matrix[agent_id]:
-                actor_logs['kl_with_agent_'+str(agent_id)].append(kl)
 
         self.old_mac.load_state(self.mac)
 
