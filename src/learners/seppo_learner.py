@@ -134,10 +134,10 @@ class SEPPOLearner(PPOLearner):
                             actor_logs['kl_with_agent_'+str(agent_id_i)+'_epoch_'+str(k)].append(kl.item())
 
             # define lambda as a vector of ones of n_agents size (later, will be given as the parameter in the config)
-            lambda_vector = th.ones(self.n_agents)
+            lambda_matrix = th.ones((self.n_agents, self.n_agents), device=batch.device).reshape(1, 1, self.n_agents, self.n_agents).repeat(batch.batch_size, batch.max_seq_length-1, 1, 1)
 
             advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
-                                                                      critic_mask, ratios, lambda_vector, kl_within_target)
+                                                                      critic_mask, ratios, lambda_matrix, kl_within_target)
             advantages = advantages.detach()
             # Calculate policy grad with mask
 
@@ -147,8 +147,8 @@ class SEPPOLearner(PPOLearner):
             entropy = -th.sum(pi * th.log(pi + 1e-10), dim=-1)
 
             # redefine losses as agent-wise multiplication of lambda and losses
-            clipped_loss = -((th.min(surr1, surr2)) * lambda_vector.view(1,1,-1,1) * kl_within_target.view(1,1,-1,1) * mask).sum() / mask.sum()
-            entropy_loss = -((self.args.entropy_coef * entropy) * lambda_vector.view(1,1,-1,1) * kl_within_target.view(1,1,-1,1) * mask).sum() / mask.sum()
+            clipped_loss = -((th.min(surr1, surr2)) * lambda_matrix * kl_within_target.view(1,1,-1,1) * mask).sum() / mask.sum()
+            entropy_loss = -((self.args.entropy_coef * entropy) * lambda_matrix * kl_within_target.view(1,1,-1,1) * mask).sum() / mask.sum()
             pg_loss = clipped_loss + entropy_loss
 
             # Optimise agents
@@ -160,8 +160,8 @@ class SEPPOLearner(PPOLearner):
         # log pg_loss, entropy_loss, is_ratios_mean for each agent_id
         for agent_id in range(self.n_agents):
 
-            clipped_loss_log = (surr1[:,:,agent_id,:] * lambda_vector[agent_id] * kl_within_target[agent_id]  * mask[:,:,agent_id,:]).sum() / mask[:,:,agent_id,:].sum()
-            entropy_loss_log = (self.args.entropy_coef * entropy[:,:,agent_id,:] * lambda_vector[agent_id] * kl_within_target[agent_id] * mask[:,:,agent_id,:]).sum() / mask[:,:,agent_id,:].sum()
+            clipped_loss_log = (surr1[:,:,agent_id,:] * kl_within_target[agent_id]  * mask[:,:,agent_id,:]).sum() / mask[:,:,agent_id,:].sum()
+            entropy_loss_log = (self.args.entropy_coef * entropy[:,:,agent_id,:] * kl_within_target[agent_id] * mask[:,:,agent_id,:]).sum() / mask[:,:,agent_id,:].sum()
             is_ratio_mean_log = ratios[:,:,agent_id,:].mean().item()
 
             actor_logs['clipped_loss'].append(clipped_loss_log.item())
@@ -194,7 +194,7 @@ class SEPPOLearner(PPOLearner):
 
                 self.log_stats_t = t_env
 
-    def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios, lambda_vector, kl_within_target):
+    def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios, lambda_matrix, kl_within_target):
 
         # Optimise critic
         with th.no_grad():
@@ -225,17 +225,17 @@ class SEPPOLearner(PPOLearner):
             # log critic loss for each agent
             with th.no_grad():
                 for agent_id in range(self.n_agents):
-                    agent_loss = ( (masked_td_error[:,:,agent_id,:]**2) * ratios[:,:,agent_id,:].detach() * lambda_vector[agent_id] * kl_within_target[agent_id] ).sum() / mask[:,:,agent_id,:].sum()
+                    agent_loss = ( (masked_td_error[:,:,agent_id,:]**2) * ratios[:,:,agent_id,:].detach() * kl_within_target[agent_id] ).sum() / mask[:,:,agent_id,:].sum()
                     running_log["critic_loss"].append(agent_loss.item())
             clamped_ratio = th.clamp(ratios.detach(), 1 - self.args.eps_clip, 1 + self.args.eps_clip)
-            loss = ( (masked_td_error**2) * clamped_ratio * lambda_vector.view(1,1,-1,1) * kl_within_target.view(1,1,-1,1) ).sum() / mask.sum()
+            loss = ( (masked_td_error**2) * clamped_ratio * lambda_matrix * kl_within_target.view(1,1,-1,1) ).sum() / mask.sum()
         else:
             # log critic loss for each agent
             with th.no_grad():
                 for agent_id in range(self.n_agents):
-                    agent_loss = ( (masked_td_error[:,:,agent_id,:] ** 2 ) * lambda_vector[agent_id] * kl_within_target[agent_id] ).sum() / mask[:,:,agent_id,:].sum()
+                    agent_loss = ( (masked_td_error[:,:,agent_id,:] ** 2 ) * kl_within_target[agent_id] ).sum() / mask[:,:,agent_id,:].sum()
                     running_log["critic_loss"].append(agent_loss.item())
-            loss = ( (masked_td_error**2) * lambda_vector.view(1,1,-1,1) * kl_within_target.view(1,1,-1,1)  ).sum() / mask.sum()
+            loss = ( (masked_td_error**2) * lambda_matrix * kl_within_target.view(1,1,-1,1)  ).sum() / mask.sum()
 
         self.critic_optimiser.zero_grad()
         loss.backward()
