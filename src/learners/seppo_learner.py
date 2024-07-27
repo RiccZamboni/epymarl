@@ -131,11 +131,20 @@ class SEPPOLearner:
                         self.logger.console_logger.info('Early stopping at epoch {} for agent id {}'.format(k+1, agent_id))
                         continue_training[agent_id] = False
 
+                # define lambda vector
+                if self.args.lambda_matrix=='one':
+                    lambda_vector = th.ones(self.args.n_agents)
+                elif self.args.lambda_matrix=='diag':
+                    lambda_vector = th.eye(self.args.n_agents)[agent_id]
+                else:
+                    raise NotImplementedError('Lambda matrix type not implemented; only one and diag are supported')
+                lambda_vector = lambda_vector.view(1,1,-1).repeat(batch.batch_size, batch.max_seq_length-1, 1).to(self.args.device)
+
                 # create critic sqeuential such that only agent_id is used for training
                 # can be done by adding agent_id as an argument to the function
                 # e.g. advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards, critic_mask, agent_id)
                 advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
-                                                                          critic_mask, ratios, agent_id)
+                                                                          critic_mask, ratios, agent_id, lambda_vector)
                 critic_train_stats_all[agent_id] = critic_train_stats
                 advantages = advantages.detach()
                 # Calculate policy grad with mask
@@ -144,9 +153,6 @@ class SEPPOLearner:
                 surr2 = th.clamp(ratios, 1 - self.args.eps_clip, 1 + self.args.eps_clip) * advantages
 
                 entropy = -th.sum(pi * th.log(pi + 1e-10), dim=-1)
-
-                # define lambda as a vector of ones of n_agents size
-                lambda_vector = th.ones(self.args.n_agents)
 
                 # redefine pg_loss as agent-wise multiplication of lambda and pg_loss
                 clipped_loss = -((th.min(surr1, surr2)) * lambda_vector * mask).sum() / mask.sum()
@@ -203,7 +209,7 @@ class SEPPOLearner:
 
             self.log_stats_t = t_env
 
-    def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios, agent_id):
+    def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios, agent_id, lambda_vector):
         # accept agent_id as an argument
 
         # check if we can keep this critic forward our of the for loop since the batch stays the same for all epochs 
@@ -236,9 +242,9 @@ class SEPPOLearner:
         td_error = (target_returns.detach() - v)
         masked_td_error = td_error * mask
         if self.args.use_critic_importance_sampling:
-            loss = ( (masked_td_error**2) * ratios.detach() ).sum() / mask.sum()
+            loss = ( (masked_td_error**2) * lambda_vector * ratios.detach() ).sum() / mask.sum()
         else:
-            loss = (masked_td_error**2).sum() / mask.sum()
+            loss = ((masked_td_error**2) * lambda_vector).sum() / mask.sum()
 
         self.critic_optimiser.zero_grad()
         loss.backward()
