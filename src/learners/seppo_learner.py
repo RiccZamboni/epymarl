@@ -74,6 +74,14 @@ class SEPPOLearner:
         # add a boolean vector to continue training for each agent
         continue_training = [True for _ in range(self.args.n_agents)]
 
+        # set logs for kl_dive among agents
+        kl_logs = {}
+        if self.args.kl_target is not None:
+            for k in range(self.args.epochs):
+                for agent_id in range( self.args.n_agents):
+                    kl_logs['kl_with_agent_'+str(agent_id)+'_epoch_'+str(k)] = []
+
+
         for k in range(self.args.epochs):
 
             if not all(continue_training): # early stopping if kl_divergence is more than kl_target
@@ -81,19 +89,12 @@ class SEPPOLearner:
 
             seppo_loss=0
 
+            # set logs
             actor_logs = {
-                    'clipped_loss': [],
-                    'entropy_loss': [],
-                    'is_ratio_mean': [],
-                    # 'agent_grad_norm': [],
-                    # 'advantages_mean': [],
-                    # 'pi_max': []
+                'clipped_loss': [],
+                'entropy_loss': [],
+                'is_ratio_mean': [],
             }
-
-            # set logs for kl_dive among agents
-            if self.args.kl_target is not None:
-                for agent_id in range( self.args.n_agents):
-                    actor_logs['kl_with_agent_'+str(agent_id)+'_epoch_'+str(k)] = []
 
             # add for loop loop over all agents
             for agent_id in range( self.args.n_agents):
@@ -166,9 +167,11 @@ class SEPPOLearner:
                 actor_logs['clipped_loss'].append(clipped_loss.item())
                 actor_logs['entropy_loss'].append(entropy_loss.item())
                 actor_logs['is_ratio_mean'].append(ratios.mean().item())
+
+                # update kl logs
                 if self.args.kl_target is not None:
                     for i,kl in enumerate(approx_kl_div):
-                        actor_logs['kl_with_agent_'+str(i)+'_epoch_'+str(k)].append(kl.item())
+                        kl_logs['kl_with_agent_'+str(agent_id)+'_epoch_'+str(k)].append(kl.item())
                 # actor_logs['advantages_mean'].append((advantages * mask).sum().item() / mask.sum().item())
                 # actor_logs['pi_max'].append((pi.max(dim=-1)[0] * mask).sum().item() / mask.sum().item())
 
@@ -206,6 +209,12 @@ class SEPPOLearner:
             for agent_id in range(self.n_agents):
                 for key in actor_logs:
                     self.logger.log_stat('agent_'+str(agent_id)+'/'+key, actor_logs[key][agent_id], t_env)
+
+            # kl_divergence logging
+            if self.args.kl_target is not None:
+                for agent_id in range(self.n_agents):
+                    for key in kl_logs:
+                        self.logger.log_stat('agent_'+str(agent_id)+'/'+key, kl_logs[key][agent_id], t_env)
 
             self.log_stats_t = t_env
 
