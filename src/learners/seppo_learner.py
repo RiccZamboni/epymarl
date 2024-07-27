@@ -91,8 +91,9 @@ class SEPPOLearner:
             }
 
             # set logs for kl_dive among agents
-            for agent_id in range( self.args.n_agents):
-                actor_logs['kl_with_agent_'+str(agent_id)] = []
+            if self.args.kl_target is not None:
+                for agent_id in range( self.args.n_agents):
+                    actor_logs['kl_with_agent_'+str(agent_id)] = []
 
             # add for loop loop over all agents
             for agent_id in range( self.args.n_agents):
@@ -159,8 +160,9 @@ class SEPPOLearner:
                 actor_logs['clipped_loss'].append(clipped_loss.item())
                 actor_logs['entropy_loss'].append(entropy_loss.item())
                 actor_logs['is_ratio_mean'].append(ratios.mean().item())
-                for i,kl in enumerate(approx_kl_div):
-                    actor_logs['kl_with_agent_'+str(i)].append(kl.item())
+                if self.args.kl_target is not None:
+                    for i,kl in enumerate(approx_kl_div):
+                        actor_logs['kl_with_agent_'+str(i)].append(kl.item())
                 # actor_logs['advantages_mean'].append((advantages * mask).sum().item() / mask.sum().item())
                 # actor_logs['pi_max'].append((pi.max(dim=-1)[0] * mask).sum().item() / mask.sum().item())
 
