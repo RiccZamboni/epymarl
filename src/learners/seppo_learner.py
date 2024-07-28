@@ -5,6 +5,9 @@ from modules.critics.coma import COMACritic
 from modules.critics.centralV import CentralVCritic
 from utils.rl_utils import build_td_lambda_targets
 import torch as th
+import numpy as np
+from sklearn.mixture import BayesianGaussianMixture
+from scipy.linalg import inv, det, sqrtm
 from torch.optim import Adam
 from modules.critics import REGISTRY as critic_resigtry
 from components.standarize_stream import RunningMeanStd
@@ -37,6 +40,7 @@ class SEPPOLearner:
             self.ret_ms = RunningMeanStd(shape=(self.n_agents, ), device=device)
         if self.args.standardise_rewards:
             self.rew_ms = RunningMeanStd(shape=(1,), device=device)
+
 
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
         # Get the relevant quantities
@@ -81,6 +85,10 @@ class SEPPOLearner:
                 for agent_id in range( self.args.n_agents):
                     kl_logs['kl_with_agent_'+str(agent_id)+'_epoch_'+str(k)] = []
 
+        self.kl_array = th.zeros(self.args.epochs, self.n_agents, self.n_agents)
+
+        # set selective lambda matrix
+        self.selective_lambda_matrix = th.eye(self.n_agents).to(self.args.device)
 
         for k in range(self.args.epochs):
 
@@ -128,6 +136,7 @@ class SEPPOLearner:
                     # compute approximated kl divergence between old policies of all agents and new policy of agent_id
                     with th.no_grad():
                         approx_kl_div = ( (ratios - 1) - log_ratios ).mean(dim=(0,1)).detach()
+                        self.kl_array[k, agent_id] = approx_kl_div
                     if approx_kl_div.max() > 1.5*self.args.kl_target:
                         self.logger.console_logger.info('Early stopping at epoch {} for agent id {}'.format(k+1, agent_id))
                         continue_training[agent_id] = False
@@ -137,6 +146,8 @@ class SEPPOLearner:
                     lambda_vector = th.ones(self.args.n_agents)
                 elif self.args.lambda_matrix=='diag':
                     lambda_vector = th.eye(self.args.n_agents)[agent_id]
+                elif self.args.lambda_matrix=='selective':
+                    lambda_vector = self.selective_lambda_matrix[agent_id]
                 else:
                     raise NotImplementedError('Lambda matrix type not implemented; only one and diag are supported')
                 lambda_vector = lambda_vector.view(1,1,-1).repeat(batch.batch_size, batch.max_seq_length-1, 1).to(self.args.device)
@@ -177,6 +188,7 @@ class SEPPOLearner:
 
             # The below part will be out of the for loops of agent_id
             # replace pg_loss with seppo_loss 
+            
 
             # Optimise agents
             self.agent_optimiser.zero_grad()
@@ -184,6 +196,9 @@ class SEPPOLearner:
             grad_norm = th.nn.utils.clip_grad_norm_(self.agent_params, self.args.grad_norm_clip)
             self.agent_optimiser.step()
 
+        # update selective lambda matrix
+        if self.args.lambda_matrix=='selective':
+                self.update_selective_lambda_matrix(kl_logs)
 
         self.old_mac.load_state(self.mac)
 
@@ -217,6 +232,50 @@ class SEPPOLearner:
                         self.logger.log_stat('agent_'+str(agent_id)+'/'+key, kl_logs[key][agent_id], t_env)
 
             self.log_stats_t = t_env
+
+    def update_selective_lambda_matrix(self, kl_logs):
+
+        # get all kl values
+        self.kl_array = self.kl_array.detach().cpu().numpy()
+        # set diagoanl values to nan
+        for agent_id in range(self.n_agents):
+            self.kl_array[:, agent_id, agent_id] = np.nan
+
+        # GMM analysis of all_kl_values
+        # Fit a Gaussian Mixture Model with 2 components
+        gmm = BayesianGaussianMixture(n_components=2)
+        gmm.fit( self.kl_array[ ~np.isnan(self.kl_array) ].reshape(-1,1) )
+        means = gmm.means_.flatten()
+        covariances = gmm.covariances_.flatten()
+
+        # update lambda matrix using Bhattacharyya coefficient of GMM components
+        bhat_coef = self.bhattacharyya(means, covariances)
+        if bhat_coef < 0.5:
+            dist_index = np.argmin(means)
+            kl_limit = means[dist_index] + np.sqrt(covariances[dist_index])
+            kl_div = self.kl_array[-1, :, :]
+            kl_div[ np.eye(self.n_agents, dtype=bool) ] = 0
+            self.selective_lambda_matrix[ kl_div < kl_limit ] = 1.0
+
+        print(self.selective_lambda_matrix)
+
+    def bhattacharyya(self, means, vars):
+
+        # Extract the means and covariances
+        mean1 = means[0]
+        mean2 = means[1]
+        var1 = vars[0]
+        var2 = vars[1]
+
+        # Calculate the Bhattacharyya distance
+        BC = 1/4 * ( (mean1 - mean2)**2 / (var1 + var2 + 1e-6) ) + 1/4 * np.log( (1/4) * (  var1/var2 + var2/var1 + 2 ) ) 
+
+        # Calculate the Bhattacharyya coefficient
+        B = np.exp(-BC)
+
+        return B
+
+
 
     def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios, agent_id, lambda_vector):
         # accept agent_id as an argument
