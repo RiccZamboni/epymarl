@@ -76,26 +76,21 @@ class SEPPOLearner:
         # critic stats dict to store each agent's critic stats
         critic_train_stats_all = {}
 
-        # add a boolean vector to continue training for each agent
-        continue_training = [True for _ in range(self.args.n_agents)]
-
         # set logs for kl_dive among agents
-        kl_logs = {}
-        if self.args.kl_target is not None:
+        if self.args.kl_logs:
+            kl_logs = {}
             for k in range(self.args.epochs):
                 for agent_id in range( self.args.n_agents):
                     kl_logs['kl_with_agent_'+str(agent_id)+'_epoch_'+str(k)] = []
 
-        self.kl_array = th.zeros(self.args.epochs, self.n_agents, self.n_agents)
+        if self.args.lambda_matrix=='selective':
+            self.kl_array = th.zeros(self.args.epochs, self.n_agents, self.n_agents)
 
         # set selective lambda matrix at the beginning of training
         if self.args.lambda_matrix=='selective':
             self.selective_lambda_matrix = th.eye(self.n_agents).to(self.args.device)
 
         for k in range(self.args.epochs):
-
-            if not all(continue_training): # early stopping if kl_divergence is more than kl_target
-                break
 
             seppo_loss=0
 
@@ -109,15 +104,11 @@ class SEPPOLearner:
             # add for loop loop over all agents
             for agent_id in range( self.args.n_agents):
 
-                if not continue_training[agent_id]: # don't train agents with kl-div higher than kl_target
-                    continue
-
                 mac_out = []
                 self.mac.init_hidden(batch.batch_size)
                 for t in range(batch.max_seq_length - 1):
-                    # create forward loop in mac s.t it rollouts using given agent_id
-                    # this forward loop creates agents_outs using the batch of all agents but with only agent_id (instead each agent_id rolling out barch data from each agent seprately as default behaviour in not-shared macs)
-                    # e.g. agent_outs = self.mac.forward(batch, t=t, agent_id=agent_id)
+                    # experience sharing controller
+                    # rollouts only for given agent_id
                     agent_outs = self.mac.forward(batch, t=t, agent_id=agent_id )
                     mac_out.append(agent_outs)
                 mac_out = th.stack(mac_out, dim=1)  # Concat over time
@@ -131,17 +122,14 @@ class SEPPOLearner:
                 log_ratios = log_pi_taken - old_log_pi_taken.detach()
                 ratios = th.exp(log_ratios)
 
-                # early stopping of training for agent_id if kl_divergence is too high 
+                # approx kl_divergence calculation
                 # inspired from discussion on https://github.com/DLR-RM/stable-baselines3/issues/417
                 # derivation can be found in Schulman blog: http://joschu.net/blog/kl-approx.html
-                if self.args.kl_target is not None:
+                if self.args.lambda_matrix=='selective':
                     # compute approximated kl divergence between old policies of all agents and new policy of agent_id
                     with th.no_grad():
                         approx_kl_div = ( (ratios - 1) - log_ratios ).mean(dim=(0,1)).detach()
                         self.kl_array[k, agent_id] = approx_kl_div
-                    if approx_kl_div.max() > 1.5*self.args.kl_target:
-                        self.logger.console_logger.info('Early stopping at epoch {} for agent id {}'.format(k+1, agent_id))
-                        continue_training[agent_id] = False
 
                 # define lambda vector
                 if self.args.lambda_matrix=='one':
@@ -154,14 +142,10 @@ class SEPPOLearner:
                     raise NotImplementedError('Lambda matrix type not implemented; only one and diag are supported')
                 lambda_vector = lambda_vector.view(1,1,-1).repeat(batch.batch_size, batch.max_seq_length-1, 1).to(self.args.device)
 
-                # create critic sqeuential such that only agent_id is used for training
-                # can be done by adding agent_id as an argument to the function
-                # e.g. advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards, critic_mask, agent_id)
                 advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
                                                                           critic_mask, ratios, agent_id, lambda_vector)
                 critic_train_stats_all[agent_id] = critic_train_stats
                 advantages = advantages.detach()
-                # Calculate policy grad with mask
 
                 surr1 = ratios * advantages
                 surr2 = th.clamp(ratios, 1 - self.args.eps_clip, 1 + self.args.eps_clip) * advantages
@@ -182,15 +166,9 @@ class SEPPOLearner:
                 actor_logs['is_ratio_mean'].append(ratios.mean().item())
 
                 # update kl logs
-                if self.args.kl_target is not None:
+                if self.args.kl_logs:
                     for i,kl in enumerate(approx_kl_div):
                         kl_logs['kl_with_agent_'+str(agent_id)+'_epoch_'+str(k)].append(kl.item())
-                # actor_logs['advantages_mean'].append((advantages * mask).sum().item() / mask.sum().item())
-                # actor_logs['pi_max'].append((pi.max(dim=-1)[0] * mask).sum().item() / mask.sum().item())
-
-            # The below part will be out of the for loops of agent_id
-            # replace pg_loss with seppo_loss 
-            
 
             # Optimise agents
             self.agent_optimiser.zero_grad()
@@ -228,7 +206,7 @@ class SEPPOLearner:
                     self.logger.log_stat('agent_'+str(agent_id)+'/'+key, actor_logs[key][agent_id], t_env)
 
             # kl_divergence logging
-            if self.args.kl_target is not None:
+            if self.args.kl_logs:
                 for agent_id in range(self.n_agents):
                     for key in kl_logs:
                         self.logger.log_stat('agent_'+str(agent_id)+'/'+key, kl_logs[key][agent_id], t_env)
