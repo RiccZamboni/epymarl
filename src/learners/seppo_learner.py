@@ -264,9 +264,7 @@ class SEPPOLearner:
 
 
     def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios, agent_id, lambda_vector):
-        # accept agent_id as an argument
-
-        # check if we can keep this critic forward our of the for loop since the batch stays the same for all epochs 
+        
         # Optimise critic
         with th.no_grad():
             target_vals = target_critic(batch, agent_id=agent_id)
@@ -282,16 +280,9 @@ class SEPPOLearner:
 
         running_log = {
             "critic_loss": [],
-            # "critic_grad_norm": [],
-            # "td_error_abs": [],
-            # "target_mean": [],
-            # "q_taken_mean": [],
         }
 
-        # check if we really need the importance sampling for the critic (My guess is that we don't need it since there is no assumption that critic network expects data from the same distribution)
-
-        # critic forward function needs to be modified to accept agent_id as an argument
-        # This new forward function will only return the critic values with the critic for given agent_id
+        # exp. sharing critic forward function rolls out using given agent_id 
         v = critic(batch, agent_id=agent_id)[:, :-1].squeeze(3)
         td_error = (target_returns.detach() - v)
         masked_td_error = td_error * mask
@@ -306,11 +297,6 @@ class SEPPOLearner:
         self.critic_optimiser.step()
 
         running_log["critic_loss"].append(loss.item())
-        # running_log["critic_grad_norm"].append(grad_norm.item())
-        # mask_elems = mask.sum().item()
-        # running_log["td_error_abs"].append((masked_td_error.abs().sum().item() / mask_elems))
-        # running_log["q_taken_mean"].append((v * mask).sum().item() / mask_elems)
-        # running_log["target_mean"].append((target_returns * mask).sum().item() / mask_elems)
 
         return masked_td_error, running_log
 
