@@ -39,3 +39,4 @@ agent: "rnn_es"
 use_critic_importance_sampling: False # to add importance sampling weights on critic loss term
 kl_target: null # early stopping the training if kl_divergence go beyond kl_target
 lambda_matrix: 'one' # 'one' for all one values (all sharing experience), 'diag' for only diagonal values (No experience sharing), 'selective' for selective experience sharing
+lambda_update_interval: 10000
