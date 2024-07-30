@@ -39,4 +39,7 @@ agent: "rnn_es"
 use_critic_importance_sampling: False # to add importance sampling weights on critic loss term
 kl_logs: False # logging kl div among agents
 lambda_matrix: 'one' # 'one' for all one values (all sharing experience), 'diag' for only diagonal values (No experience sharing), 'selective' for selective experience sharing
+lambda_select_method: 'cutoff' # 'cutoff' method and 'gmm' method
+lambda_cutoff: 0.15 # ranges from 0.1 to 0.3
 lambda_update_interval: 10000
+lambda_update_start: 50000

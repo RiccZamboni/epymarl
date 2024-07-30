@@ -215,30 +215,36 @@ class SEPPOLearner:
 
     def update_selective_lambda_matrix(self, t_env):
 
-        if t_env - self.lambda_update_t >= self.args.lambda_update_interval:
+        if (t_env - self.lambda_update_t >= self.args.lambda_update_interval) and (t_env > self.args.lambda_update_start):
 
-            # get all kl values
-            self.kl_array = self.kl_array.detach().cpu().numpy()
-            # set diagoanl values to nan
-            for agent_id in range(self.n_agents):
-                self.kl_array[:, agent_id, agent_id] = np.nan
-
-            # GMM analysis of all_kl_values
-            # Fit a Gaussian Mixture Model with 2 components
-            gmm = BayesianGaussianMixture(n_components=2)
-            gmm.fit( self.kl_array[ ~np.isnan(self.kl_array) ].reshape(-1,1) )
-            means = gmm.means_.flatten()
-            covariances = gmm.covariances_.flatten()
-
-            # update lambda matrix using Bhattacharyya coefficient of GMM components
-            bhat_coef = self.bhattacharyya(means, covariances)
-            if bhat_coef < 0.5:
-                dist_index = np.argmin(means)
-                kl_limit = means[dist_index] + np.sqrt(covariances[dist_index])
-                kl_div = self.kl_array[-1, :, :]
-                kl_div[ np.eye(self.n_agents, dtype=bool) ] = 0
-                self.selective_lambda_matrix[ th.from_numpy(kl_div < kl_limit) ] = 1.0
-
+            if self.args.lambda_select_method == 'gmm':
+                # get all kl values
+                kl_array = self.kl_array.detach().cpu().numpy()
+                # set diagoanl values to nan
+                for agent_id in range(self.n_agents):
+                    kl_array[:, agent_id, agent_id] = np.nan
+     
+                # GMM analysis of all_kl_values
+                # Fit a Gaussian Mixture Model with 2 components
+                gmm = BayesianGaussianMixture(n_components=2)
+                gmm.fit( kl_array[ ~np.isnan(kl_array) ].reshape(-1,1) )
+                means = gmm.means_.flatten()
+                covariances = gmm.covariances_.flatten()
+     
+                # update lambda matrix using Bhattacharyya coefficient of GMM components
+                bhat_coef = self.bhattacharyya(means, covariances)
+                if bhat_coef < 0.5:
+                    dist_index = np.argmin(means)
+                    kl_limit = means[dist_index] + np.sqrt(covariances[dist_index])
+                    kl_div = self.kl_array[-1, :, :].detach().cpu().numpy()
+                    kl_div[ np.eye(self.n_agents, dtype=bool) ] = 0
+                    self.selective_lambda_matrix[ th.from_numpy(kl_div < kl_limit) ] = 1.0
+     
+            elif self.args.lambda_select_method == 'cutoff':
+                kl_matrix = self.kl_array[0, :, :]
+                delta = th.min(kl_matrix) + ( th.max(kl_matrix) - th.min(kl_matrix) ) * self.args.lambda_cutoff
+                self.selective_lambda_matrix[ kl_matrix < delta ] = 1.0
+            
             self.lambda_update_t = t_env
 
     def bhattacharyya(self, means, vars):
