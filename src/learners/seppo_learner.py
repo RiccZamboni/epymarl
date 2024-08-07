@@ -157,8 +157,6 @@ class SEPPOLearner:
                 entropy_loss = -((self.args.entropy_coef * entropy) * lambda_vector * mask).sum() / mask.sum()
                 pg_loss = clipped_loss + entropy_loss
 
-                print('epoch:', k, 'agent_id:', agent_id, 'clipped_loss:', clipped_loss.item(), 'entropy_loss:', entropy_loss.item())
-
                 # add pg_loss to seppo_loss
                 seppo_loss  = seppo_loss + pg_loss
 
@@ -298,8 +296,6 @@ class SEPPOLearner:
             loss = ( (masked_td_error**2) * lambda_vector * ratios.detach() ).sum() / mask.sum()
         else:
             loss = ((masked_td_error**2) * lambda_vector).sum() / mask.sum()
-
-        print('critic_loss:', loss.item())
 
         self.critic_optimiser.zero_grad()
         loss.backward()
