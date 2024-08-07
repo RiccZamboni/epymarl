@@ -37,4 +37,4 @@ t_max: 20050000
 mac: "exp_share_mac"
 agent: "rnn_ns"
 use_critic_importance_sampling: False # to add importance sampling weights on critic loss term
-kl_target: null # early stopping the training if kl_divergence go beyond kl_target
+log_kl: False # early stopping the training if kl_divergence go beyond kl_target
