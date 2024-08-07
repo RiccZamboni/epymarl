@@ -83,7 +83,7 @@ class SEPPOLearner:
                 for agent_id in range( self.args.n_agents):
                     kl_logs['kl_with_agent_'+str(agent_id)+'_epoch_'+str(k)] = []
 
-        if self.args.lambda_matrix=='selective':
+        if self.args.kl_logs:
             self.kl_array = th.zeros(self.args.epochs, self.n_agents, self.n_agents)
 
         # set selective lambda matrix at the beginning of training
@@ -125,7 +125,7 @@ class SEPPOLearner:
                 # approx kl_divergence calculation
                 # inspired from discussion on https://github.com/DLR-RM/stable-baselines3/issues/417
                 # derivation can be found in Schulman blog: http://joschu.net/blog/kl-approx.html
-                if self.args.lambda_matrix=='selective':
+                if self.args.kl_logs:
                     # compute approximated kl divergence between old policies of all agents and new policy of agent_id
                     with th.no_grad():
                         approx_kl_div = ( (ratios - 1) - log_ratios ).mean(dim=(0,1)).detach()
@@ -156,6 +156,8 @@ class SEPPOLearner:
                 clipped_loss = -((th.min(surr1, surr2)) * lambda_vector * mask).sum() / mask.sum()
                 entropy_loss = -((self.args.entropy_coef * entropy) * lambda_vector * mask).sum() / mask.sum()
                 pg_loss = clipped_loss + entropy_loss
+
+                print('epoch:', k, 'agent_id:', agent_id, 'clipped_loss:', clipped_loss.item(), 'entropy_loss:', entropy_loss.item())
 
                 # add pg_loss to seppo_loss
                 seppo_loss  = seppo_loss + pg_loss
@@ -296,6 +298,8 @@ class SEPPOLearner:
             loss = ( (masked_td_error**2) * lambda_vector * ratios.detach() ).sum() / mask.sum()
         else:
             loss = ((masked_td_error**2) * lambda_vector).sum() / mask.sum()
+
+        print('critic_loss:', loss.item())
 
         self.critic_optimiser.zero_grad()
         loss.backward()
