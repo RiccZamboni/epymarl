@@ -32,7 +32,8 @@ class ACCriticES(ACCriticNS):
         # observations
         inputs.append(batch["obs"][:, ts])
 
-        inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1))
+        if self.args.obs_agent_id:
+            inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1))
 
         inputs = th.cat(inputs, dim=-1)
         return inputs, bs, max_t
@@ -41,7 +42,8 @@ class ACCriticES(ACCriticNS):
         # observations
         input_shape = scheme["obs"]["vshape"]
         # agent id
-        input_shape += self.n_agents
+        if self.args.obs_agent_id:
+            input_shape += self.n_agents
         return input_shape
     
 

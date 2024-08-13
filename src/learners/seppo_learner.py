@@ -56,7 +56,6 @@ class SEPPOLearner:
             self.rew_ms.update(rewards)
             rewards = (rewards - self.rew_ms.mean) / th.sqrt(self.rew_ms.var)
 
-
         mask = mask.repeat(1, 1, self.n_agents)
 
         critic_mask = mask.clone()
@@ -92,6 +91,8 @@ class SEPPOLearner:
 
         for k in range(self.args.epochs):
 
+            # print(' t_env:', t_env, ' epoch:', k)
+
             seppo_loss=0
 
             # set logs
@@ -107,8 +108,7 @@ class SEPPOLearner:
                 mac_out = []
                 self.mac.init_hidden(batch.batch_size)
                 for t in range(batch.max_seq_length - 1):
-                    # experience sharing controller
-                    # rollouts only for given agent_id
+                    # rollout all agents data with agent_id agent
                     agent_outs = self.mac.forward(batch, t=t, agent_id=agent_id )
                     mac_out.append(agent_outs)
                 mac_out = th.stack(mac_out, dim=1)  # Concat over time
@@ -157,6 +157,8 @@ class SEPPOLearner:
                 entropy_loss = -((self.args.entropy_coef * entropy) * lambda_vector * mask).sum() / mask.sum()
                 pg_loss = clipped_loss + entropy_loss
 
+                # print('agent:', agent_id, ' clipped loss:', clipped_loss.item(), 'entropy loss:', entropy_loss.item())
+
                 # add pg_loss to seppo_loss
                 seppo_loss  = seppo_loss + pg_loss
 
@@ -172,10 +174,12 @@ class SEPPOLearner:
 
             # Optimise agents
             self.agent_optimiser.zero_grad()
+            # print('seppo_loss', seppo_loss.item())
             seppo_loss.backward()
             grad_norm = th.nn.utils.clip_grad_norm_(self.agent_params, self.args.grad_norm_clip)
             self.agent_optimiser.step()
 
+             
         # update selective lambda matrix
         if self.args.lambda_matrix=='selective':
                 self.update_selective_lambda_matrix(t_env)
@@ -190,7 +194,7 @@ class SEPPOLearner:
         elif self.args.target_update_interval_or_tau <= 1.0:
             self._update_targets_soft(self.args.target_update_interval_or_tau)
 
-        # logging should be done for each agent_id
+        # logging done for each agent_id
         if t_env - self.log_stats_t >= self.args.learner_log_interval:
 
             # critc logging
@@ -293,11 +297,14 @@ class SEPPOLearner:
         td_error = (target_returns.detach() - v)
         masked_td_error = td_error * mask
         if self.args.use_critic_importance_sampling:
-            loss = ( (masked_td_error**2) * lambda_vector * ratios.detach() ).sum() / mask.sum()
+            # clamp the importance sampling weights
+            clamped_ratios = th.clamp(ratios, 1 - self.args.eps_clip , 1 + self.args.eps_clip)
+            loss = ( (masked_td_error**2) * lambda_vector * clamped_ratios.detach() ).sum() / mask.sum()
+            # print(' agent_id:', agent_id, ' critic_loss:', loss.item() )
         else:
             loss = ((masked_td_error**2) * lambda_vector).sum() / mask.sum()
 
-        self.critic_optimiser.zero_grad()
+        self.critic_optimiser.zero_grad(set_to_none=True)
         loss.backward()
         grad_norm = th.nn.utils.clip_grad_norm_(self.critic_params, self.args.grad_norm_clip)
         self.critic_optimiser.step()
