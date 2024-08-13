@@ -122,7 +122,13 @@ class SEPPOLearner(PPOLearner):
                             actor_logs['kl_with_agent_'+str(agent_id_i)+'_epoch_'+str(k)].append(kl.item())
 
             # define lambda as a vector of ones of n_agents size (later, will be given as the parameter in the config)
-            lambda_matrix = th.ones((self.n_agents, self.n_agents), device=batch.device).reshape(1, 1, self.n_agents, self.n_agents).repeat(batch.batch_size, batch.max_seq_length-1, 1, 1)
+            if self.args.lambda_matrix=='one':
+                lambda_matrix = th.ones((self.n_agents, self.n_agents), device=batch.device)
+            elif self.args.lambda_matrix=='diag':
+                lambda_matrix = th.eye(self.n_agents, device=batch.device)
+            else:
+                raise NotImplementedError('lambda_matrix should be one or diag')
+            lambda_matrix = lambda_matrix.reshape(1, 1, self.n_agents, self.n_agents).repeat(batch.batch_size, batch.max_seq_length-1, 1, 1)
 
             advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
                                                                       critic_mask, ratios, lambda_matrix)
