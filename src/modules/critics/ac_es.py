@@ -20,12 +20,27 @@ class ACCriticES(ACCriticNS):
         bs = batch.batch_size
         max_t = batch.max_seq_length if t is None else 1
         ts = slice(None) if t is None else slice(t, t + 1)
-        inputs = batch["obs"][:, ts]
+        inputs = []
+        inputs.append( batch["obs"][:, ts] )
+
+        if self.args.obs_agent_id:
+            inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1))
+        inputs = th.cat(inputs, dim=-1)
+
         # repeat inputs by agents to feed all agents' experience to all agents' critics
         # in a single batch
         # reshape from (batch_size, ep_length + 1, n_agents, obs_shape)
         # to (n_agents * batch_size, ep_length + 1, n_agents, obs_shape)
         inputs = inputs.unsqueeze(-2).repeat(1, 1, 1, self.n_agents, 1)
         return inputs, bs, max_t
+
+    def _get_input_shape(self, scheme):
+        # observations
+        input_shape = scheme["obs"]["vshape"]
+        # agent id
+        if self.args.obs_agent_id:
+            input_shape += self.n_agents
+        return input_shape
+    
     
 

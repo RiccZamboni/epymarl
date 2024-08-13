@@ -38,19 +38,7 @@ class ExpShareMAC(NonSharedMAC):
         # return action logits as (batch_size * n_agents * n_agents, n_actions)
         # and hidden states as (batch_size * n_agents, n_agents, hidden_size)
         agent_outs, self.hidden_states = self.agent(agent_inputs, self.hidden_states)
-        agent_outs = agent_outs.view(self.n_agents, ep_batch.batch_size, self.n_agents, -1).transpose(0,1)
-
-        # print('agent_outs[:50]', agent_outs[:50])
-        # print('agent_outs[50:100]', agent_outs[50:100])
-        # print('agent_outs[100:150]', agent_outs[100:150])
-        # print('agent_outs[150:200]', agent_outs[150:200])
-        # print('agent_outs[200:250]', agent_outs[200:250])
-
-        # modify agent forward function to take agent_id as input
-        # this function should return the action output such that only agent_id agent rollouts using ...
-        # ...batch of all agents (instead each agent_id corresponding to each agent in the batch, as done in NonSharedMAC)
-        # e.g. agent_outs, self.hidden_states = self.agent(agent_inputs, self.hidden_states, agent_id)
-        # agent_outs, self.hidden_states = self.agent(agent_inputs, self.hidden_states, agent_id=agent_id)
+        agent_outs = agent_outs.view(ep_batch.batch_size, self.n_agents, self.n_agents, -1)
 
         # Softmax the agent outputs if they're policy logits
         if self.agent_output_type == "pi_logits":
