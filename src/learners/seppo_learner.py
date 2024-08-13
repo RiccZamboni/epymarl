@@ -216,8 +216,6 @@ class SEPPOLearner(PPOLearner):
                 delta = self.args.lambda_cutoff
                 self.selective_lambda_matrix[ kl_matrix < delta ] = 1.0
 
-                print('t_env:', t_env, ' lambda_matrix:\n', self.selective_lambda_matrix)
-            
             self.lambda_update_t = t_env
 
     def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios, lambda_matrix):
