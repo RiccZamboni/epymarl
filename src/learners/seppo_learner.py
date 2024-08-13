@@ -32,6 +32,7 @@ class SEPPOLearner(PPOLearner):
         self.last_target_update_step = 0
         self.critic_training_steps = 0
         self.log_stats_t = -self.args.learner_log_interval - 1
+        self.lambda_update_t = -self.args.lambda_update_interval - 1
 
         device = "cuda" if args.use_cuda else "cpu"
         if self.args.standardise_returns:
@@ -76,6 +77,13 @@ class SEPPOLearner(PPOLearner):
 
         critic_mask = mask.clone()
 
+        if self.args.kl_logs:
+            self.kl_array = th.zeros(self.args.epochs, self.n_agents, self.n_agents)
+
+        # set selective lambda matrix at the beginning of training
+        if self.args.lambda_matrix=='selective':
+            self.selective_lambda_matrix = th.eye(self.n_agents).to(self.args.device)
+
         for k in range(self.args.epochs):
 
             actor_logs = {
@@ -85,7 +93,7 @@ class SEPPOLearner(PPOLearner):
             }
 
             # set logs for kl_div among agents
-            if self.args.log_kl:
+            if self.args.kl_logs:
                 for agent_id in range( self.n_agents):
                     actor_logs['kl_with_agent_'+str(agent_id)+'_epoch_'+str(k)] = []
 
@@ -107,7 +115,7 @@ class SEPPOLearner(PPOLearner):
 
             # kl logging: approximated kl divergence among all agents
             # derivation can be found in Schulman blog: http://joschu.net/blog/kl-approx.html
-            if self.args.log_kl:
+            if self.args.kl_logs:
                 # compute approximated kl divergence among all agents 
                 with th.no_grad():
                     kl_matrix = th.zeros(self.n_agents, self.n_agents)
@@ -120,12 +128,17 @@ class SEPPOLearner(PPOLearner):
                         # log kl_divergence for each agent_id_i
                         for kl in kl_matrix[agent_id_i]:
                             actor_logs['kl_with_agent_'+str(agent_id_i)+'_epoch_'+str(k)].append(kl.item())
+                    
+                    self.kl_array[k] = kl_matrix
+
 
             # define lambda as a vector of ones of n_agents size (later, will be given as the parameter in the config)
             if self.args.lambda_matrix=='one':
                 lambda_matrix = th.ones((self.n_agents, self.n_agents), device=batch.device)
             elif self.args.lambda_matrix=='diag':
                 lambda_matrix = th.eye(self.n_agents, device=batch.device)
+            elif self.args.lambda_matrix=='selective':
+                lambda_matrix = self.selective_lambda_matrix
             else:
                 raise NotImplementedError('lambda_matrix should be one or diag')
             lambda_matrix = lambda_matrix.reshape(1, 1, self.n_agents, self.n_agents).repeat(batch.batch_size, batch.max_seq_length-1, 1, 1)
@@ -162,6 +175,9 @@ class SEPPOLearner(PPOLearner):
             grad_norm = th.nn.utils.clip_grad_norm_(self.agent_params, self.args.grad_norm_clip)
             self.agent_optimiser.step()
 
+        # update selective lambda matrix
+        if self.args.lambda_matrix=='selective':
+            self.update_selective_lambda_matrix(t_env)
 
         self.old_mac.load_state(self.mac)
 
@@ -188,6 +204,21 @@ class SEPPOLearner(PPOLearner):
                         self.logger.log_stat('agent_'+str(agent_id)+'/'+key, actor_logs[key][agent_id], t_env)
 
                 self.log_stats_t = t_env
+
+    def update_selective_lambda_matrix(self, t_env):
+
+        if (t_env - self.lambda_update_t >= self.args.lambda_update_interval) and (t_env > self.args.lambda_update_start):
+
+            self.selective_lambda_matrix = th.eye(self.n_agents).to(self.args.device)
+
+            if self.args.lambda_select_method == 'cutoff':
+                kl_matrix = self.kl_array[0, :, :]
+                delta = self.args.lambda_cutoff
+                self.selective_lambda_matrix[ kl_matrix < delta ] = 1.0
+
+                print('t_env:', t_env, ' lambda_matrix:\n', self.selective_lambda_matrix)
+            
+            self.lambda_update_t = t_env
 
     def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios, lambda_matrix):
 
