@@ -128,15 +128,40 @@ class SEPPOLearner(PPOLearner):
                 # compute approximated kl divergence among all agents 
                 with th.no_grad():
                     kl_matrix = th.zeros(self.n_agents, self.n_agents)
-                    for agent_id_i in range(self.n_agents):
-                        for agent_id_j in range(self.n_agents):
-                            log_ratios_ij = log_ratios[:,:,:,agent_id_i] - log_ratios[:,:,:,agent_id_j]
-                            ratios_ij = th.exp(log_ratios_ij)
-                            kl_matrix[agent_id_i, agent_id_j] = ( (ratios_ij - 1) - log_ratios_ij ).mean()
-
-                        # log kl_divergence for each agent_id_i
-                        for kl in kl_matrix[agent_id_i]:
-                            actor_logs['kl_with_agent_'+str(agent_id_i)+'_epoch_'+str(k)].append(kl.item())
+                    if self.args.metric == 'kl':
+                        # KL divergence
+                        for agent_id_i in range(self.n_agents):
+                            for agent_id_j in range(self.n_agents):
+                                log_ratios_ij = log_ratios[:,:,:,agent_id_i] - log_ratios[:,:,:,agent_id_j]
+                                ratios_ij = th.exp(log_ratios_ij)
+                                kl_matrix[agent_id_i, agent_id_j] = ( (ratios_ij - 1) - log_ratios_ij ).mean()
+                 
+                            # log kl_divergence for each agent_id_i
+                            for kl in kl_matrix[agent_id_i]:
+                                actor_logs['kl_with_agent_'+str(agent_id_i)+'_epoch_'+str(k)].append(kl.item())
+                    elif self.args.metric == 'js':
+                        # Jensen-Shannon distance
+                        for agent_id_i in range(self.n_agents):
+                            for agent_id_j in range( agent_id_i+1 , self.n_agents):
+                                log_ratios_m = th.log( (ratios[:,:,:,agent_id_i] + ratios[:,:,:,agent_id_j]) / 2 )
+                                # compute kl_im
+                                log_ratios_im = log_ratios[:,:,:,agent_id_i] - log_ratios_m
+                                ratios_im = th.exp(log_ratios_im)
+                                kl_im = ( (ratios_im - 1) - log_ratios_im ).mean()
+                                # compute kl_jm
+                                log_ratios_jm = log_ratios[:,:,:,agent_id_j] - log_ratios_m
+                                ratios_jm = th.exp(log_ratios_jm)
+                                kl_jm = ( (ratios_jm - 1) - log_ratios_jm ).mean()
+                                # compute js
+                                kl_matrix[agent_id_i, agent_id_j] = (kl_im + kl_jm) / 2 
+                        kl_matrix = kl_matrix + kl_matrix.t() #symmetric matrix
+                        print('kl_matrix:', kl_matrix)
+                        # log kl_divergence for all agents
+                        for agent_id_i in range(self.n_agents):
+                            for kl in kl_matrix[agent_id_i]:
+                                actor_logs['kl_with_agent_'+str(agent_id_i)+'_epoch_'+str(k)].append(kl.item())
+                    else:
+                        raise NotImplementedError('metric should be kl or js')
                     
                     self.kl_array[k] = kl_matrix
 
