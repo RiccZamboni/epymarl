@@ -155,7 +155,6 @@ class SEPPOLearner(PPOLearner):
                                 # compute js
                                 kl_matrix[agent_id_i, agent_id_j] = (kl_im + kl_jm) / 2 
                         kl_matrix = kl_matrix + kl_matrix.t() #symmetric matrix
-                        print('kl_matrix:', kl_matrix)
                         # log kl_divergence for all agents
                         for agent_id_i in range(self.n_agents):
                             for kl in kl_matrix[agent_id_i]:
