@@ -112,15 +112,6 @@ class SEPPOLearner(PPOLearner):
 
             log_ratios = log_pi_taken - old_log_pi_taken.detach()
             ratios = th.exp(log_ratios)
-            with th.no_grad():
-                if self.args.kl_weighted_loss:
-                    if t_env > self.args.kl_weighted_loss_start:
-                        kl = ( ratios - 1 - log_ratios )
-                    else:
-                        kl_matrix = 50*(1 - th.diag(th.ones(self.n_agents))).to(self.args.device)
-                        kl = kl_matrix.reshape(1, 1, self.n_agents, self.n_agents).repeat(batch.batch_size, batch.max_seq_length-1, 1, 1)
-                else:
-                    kl = th.zeros_like(ratios)
 
             # kl logging: approximated kl divergence among all agents
             # derivation can be found in Schulman blog: http://joschu.net/blog/kl-approx.html
@@ -175,8 +166,8 @@ class SEPPOLearner(PPOLearner):
                     actor_logs['entropy_loss'].append(entropy_loss.item())
                     actor_logs['is_ratio_mean'].append(ratios_mean)
 
-            clipped_loss = -(  (th.min(surr1, surr2)) * lambda_matrix * th.exp(-( self.args.kl_multiplier*kl))  * mask).sum() / mask.sum()
-            entropy_loss = -(self.args.entropy_coef * entropy  * lambda_matrix * th.exp(-( self.args.kl_multiplier*kl))  * mask).sum() / mask.sum()
+            clipped_loss = -(  (th.min(surr1, surr2)) * lambda_matrix  * mask).sum() / mask.sum()
+            entropy_loss = -(self.args.entropy_coef * entropy  * lambda_matrix * mask).sum() / mask.sum()
             seppo_loss = clipped_loss + entropy_loss
 
             # Optimise agents
@@ -295,7 +286,7 @@ class SEPPOLearner(PPOLearner):
                     # print(' agent_id:', agent_id, ' critic_loss:', agent_loss.item())
                     running_log["critic_loss"].append(agent_loss.item())
             clamped_ratios = th.clamp(ratios, 1 - self.args.eps_clip, 1 + self.args.eps_clip)
-            seppo_critic_loss = ( (masked_td_error**2) * lambda_matrix * th.exp(-( self.args.kl_multiplier*kl))  *  clamped_ratios.detach() ).sum() / mask.sum()
+            seppo_critic_loss = ( (masked_td_error**2) * lambda_matrix *  clamped_ratios.detach() ).sum() / mask.sum()
         else:
             with th.no_grad():
                 # log critic loss for each agent
@@ -303,7 +294,7 @@ class SEPPOLearner(PPOLearner):
                     agent_loss = ( (masked_td_error[:,:,:,agent_id] ** 2 ) * lambda_matrix[:,:,agent_id,:]  ).sum() / mask[:,:,:,agent_id].sum()
                     # print(' agent_id:', agent_id, ' critic_loss:', agent_loss.item())
                     running_log["critic_loss"].append(agent_loss.item())
-            seppo_critic_loss = ( (masked_td_error**2) * lambda_matrix * th.exp(-( self.args.kl_multiplier*kl)) ).sum() / mask.sum()
+            seppo_critic_loss = ( (masked_td_error**2) * lambda_matrix  ).sum() / mask.sum()
 
         self.critic_optimiser.zero_grad()
         seppo_critic_loss.backward()
