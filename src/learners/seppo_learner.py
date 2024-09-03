@@ -1,5 +1,6 @@
 # code heavily adapted from https://github.com/AnujMahajanOxf/MAVEN
 import copy
+import numpy as np
 from components.episode_buffer import EpisodeBatch
 from modules.critics.coma import COMACritic
 from modules.critics.centralV import CentralVCritic
@@ -7,8 +8,10 @@ from utils.rl_utils import build_td_lambda_targets
 import torch as th
 from torch.optim import Adam
 from modules.critics import REGISTRY as critic_resigtry
+from controllers import REGISTRY as mac_REGISTRY
 from components.standarize_stream import RunningMeanStd
 from learners.ppo_learner import PPOLearner
+from sacred.observers import FileStorageObserver
 
 
 class SEPPOLearner(PPOLearner):
@@ -39,6 +42,11 @@ class SEPPOLearner(PPOLearner):
             self.ret_ms = RunningMeanStd(shape=(self.n_agents, ), device=device)
         if self.args.standardise_rewards:
             self.rew_ms = RunningMeanStd(shape=(1,), device=device)
+
+        if self.args.save_policy_update_distance_matrix:
+            self.policy_dist_update_t = -self.args.policy_distance_interval - 1
+            self.saved_macs = []
+
 
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
         # Get the relevant quantities
@@ -132,6 +140,10 @@ class SEPPOLearner(PPOLearner):
                             actor_logs['kl_with_agent_'+str(agent_id_i)+'_epoch_'+str(k)].append(kl.item())
                     self.kl_array[k] = kl_matrix
 
+                if self.args.save_policy_update_distance_matrix:
+                    if k==0:
+                        self.update_policy_distance_matrix(t_env, self.mac, batch)
+
 
             # define lambda as a vector of ones of n_agents size (later, will be given as the parameter in the config)
             if self.args.lambda_matrix=='one':
@@ -219,13 +231,128 @@ class SEPPOLearner(PPOLearner):
 
             self.lambda_update_t = t_env
 
+    def update_policy_distance_matrix(self, t_env, mac, batch):
+        if (t_env - self.policy_dist_update_t >= self.args.policy_distance_interval):
+            print('updating policy distance matrix at t_env:', t_env)
+            with th.no_grad():
+                new_mac = mac_REGISTRY[self.args.mac]( batch.scheme, batch.groups , self.args)
+                new_mac.load_state(mac)
+                self.saved_macs.append(new_mac)
+                log_ratios_list = self.get_log_ratios_list(batch)
+
+                if self.args.metric == 'kl':
+                    distance_fn = self.compute_approax_kl_div
+                elif self.args.metric == 'js':
+                    distance_fn = self.compute_approx_js_div
+                else:
+                    raise NotImplementedError('metric should be kl or js')
+
+                # generate a policy update distance matrix of size n_agents*len(log_ratios_list) x n_agents*len(log_ratios_list)
+                policy_update_distance_matrix = th.zeros(len(log_ratios_list)*self.n_agents, len(log_ratios_list)*self.n_agents)
+                for i,log_ratios_i in enumerate(log_ratios_list):
+                    for j,log_ratios_j in enumerate(log_ratios_list):
+                        for agent_id_i in range(self.n_agents):
+                            for agent_id_j in range(self.n_agents):
+                                policy_update_distance_matrix[i*self.n_agents+agent_id_i, j*self.n_agents+agent_id_j] =  distance_fn(log_ratios_i[:,:,:,agent_id_i], log_ratios_j[:,:,:,agent_id_j])
+
+                # save the policy update distance matrix as csv in sacred directory
+                self.save_to_csv(policy_update_distance_matrix.numpy(), t_env)
+
+            self.policy_dist_update_t = t_env
+
+    def save_to_csv(self, policy_update_distance_matrix, t_env):
+        # get the path to save the policy update distance matrix
+        run_obj = self.logger._run_obj
+        file_observer = next(observer for observer in run_obj.observers if isinstance(observer, FileStorageObserver))
+        file_path = file_observer.dir
+
+        # save the policy update distance matrix as csv
+        file_name = 'policy_update_distance_matrix.csv'
+        file_path = file_path + '/' + file_name
+        np.savetxt(file_path, policy_update_distance_matrix, delimiter=",")
+
+        # add footer with t_env, n_agents, n_policies
+        with open(file_path, 'a') as f:
+            f.write('t_env: '+str(t_env)+'\n')
+            f.write('n_agents: '+str(self.n_agents)+'\n')
+            f.write('n_policies: '+str(len(self.saved_macs)))
+
+    def get_log_ratios_list(self, batch):
+        log_ratios_list = []
+        for mac in self.saved_macs:
+            log_ratios_list.append(self.get_log_ratios(mac, batch))
+        return log_ratios_list
+
+    def get_log_ratios(self, mac, batch):       
+
+        actions = batch["actions"][:, :]
+        terminated = batch["terminated"][:, :-1].float()
+        mask = batch["filled"][:, :-1].float()
+        mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
+        actions = actions[:, :-1]
+        mask = mask.repeat(1, 1, self.n_agents)
+
+        old_mac_out = []
+        mac.init_hidden(batch.batch_size)
+        for t in range(batch.max_seq_length - 1):
+            agent_outs = mac.forward(batch, t=t)
+            old_mac_out.append(agent_outs)
+        old_mac_out = th.stack(old_mac_out, dim=1)  # Concat over time
+        old_pi = old_mac_out
+        old_pi[mask == 0] = 1.0
+
+        old_pi_taken = th.gather(old_pi, dim=3, index=actions).squeeze(3)
+        old_log_pi_taken = th.log(old_pi_taken + 1e-10)
+
+        # reshape/ repeat from (batch_size, eplength, n_agents) to (batch_size, eplength, n_agents, n_agents)
+        # to match data of all agents being fed through each agent's network in single batch with
+        # entry [:, :, i, :] being the data of agent i
+        old_log_pi_taken = old_log_pi_taken.unsqueeze(-1).repeat(1, 1, 1, self.n_agents)
+        actions = actions.unsqueeze(-2).repeat(1, 1, 1, self.n_agents, 1)
+        mask = mask.unsqueeze(-1).repeat(1, 1, 1, self.n_agents)
+
+        mac_out = []
+        mac.init_hidden(batch.batch_size * self.n_agents)
+        for t in range(batch.max_seq_length - 1):
+            agent_outs = mac.forward( batch, t=t, all_agents=True )
+            mac_out.append(agent_outs)
+        mac_out = th.stack(mac_out, dim=1)  # Concat over time
+
+        pi = mac_out
+        pi[mask == 0] = 1.0
+
+        pi_taken = th.gather(pi, dim=-1, index=actions).squeeze(-1)
+        log_pi_taken = th.log(pi_taken + 1e-10)
+
+        log_ratios = log_pi_taken - old_log_pi_taken
+
+        return log_ratios
+
+    def compute_approax_kl_div(self, log_ratios_i, log_ratios_j):
+        log_ratios_ij = log_ratios_i - log_ratios_j
+        ratios_ij = th.exp(log_ratios_ij)
+        kl_ij = ( (ratios_ij - 1) - log_ratios_ij ).mean()
+        return kl_ij
+    
+    def compute_approx_js_div(self, log_ratios_i, log_ratios_j):
+        log_ratios_m = th.log( ( th.exp(log_ratios_i) + th.exp(log_ratios_j) ) / 2  + 1e-10 )
+        # compute kl_im
+        log_ratios_im = log_ratios_i - log_ratios_m
+        ratios_im = th.exp(log_ratios_im)
+        kl_im = ( (ratios_im - 1) - log_ratios_im ).mean()
+        # compute kl_jm
+        log_ratios_jm = log_ratios_j - log_ratios_m
+        ratios_jm = th.exp(log_ratios_jm)
+        kl_jm = ( (ratios_jm - 1) - log_ratios_jm ).mean()
+        # compute js
+        js = (kl_im + kl_jm) / 2 
+        return js
+
     def compute_kl_matrix(self, log_ratios):
         kl_matrix = th.zeros(self.n_agents, self.n_agents)
         for agent_id_i in range(self.n_agents):
             for agent_id_j in range(self.n_agents):
-                log_ratios_ij = log_ratios[:,:,:,agent_id_i] - log_ratios[:,:,:,agent_id_j]
-                ratios_ij = th.exp(log_ratios_ij)
-                kl_matrix[agent_id_i, agent_id_j] = ( (ratios_ij - 1) - log_ratios_ij ).mean()
+                kl_matrix[agent_id_i, agent_id_j] = self.compute_approax_kl_div(log_ratios[:,:,:,agent_id_i], log_ratios[:,:,:,agent_id_j])
         return kl_matrix
                  
     
@@ -233,17 +360,7 @@ class SEPPOLearner(PPOLearner):
         kl_matrix = th.zeros(self.n_agents, self.n_agents)
         for agent_id_i in range(self.n_agents):
             for agent_id_j in range( agent_id_i+1 , self.n_agents):
-                log_ratios_m = th.log( ( th.exp(log_ratios[:,:,:,agent_id_i]) + th.exp(log_ratios[:,:,:,agent_id_j]) ) / 2 )
-                # compute kl_im
-                log_ratios_im = log_ratios[:,:,:,agent_id_i] - log_ratios_m
-                ratios_im = th.exp(log_ratios_im)
-                kl_im = ( (ratios_im - 1) - log_ratios_im ).mean()
-                # compute kl_jm
-                log_ratios_jm = log_ratios[:,:,:,agent_id_j] - log_ratios_m
-                ratios_jm = th.exp(log_ratios_jm)
-                kl_jm = ( (ratios_jm - 1) - log_ratios_jm ).mean()
-                # compute js
-                kl_matrix[agent_id_i, agent_id_j] = (kl_im + kl_jm) / 2 
+                kl_matrix[agent_id_i, agent_id_j] = self.compute_approx_js_div(log_ratios[:,:,:,agent_id_i], log_ratios[:,:,:,agent_id_j])
         kl_matrix = kl_matrix + kl_matrix.t() #symmetric matrix
         return kl_matrix
     

@@ -44,4 +44,7 @@ lambda_cutoff: 1.0 # KL div cutoff
 lambda_update_interval: 10000
 lambda_update_start: 50000
 
+save_policy_update_distance_matrix: False
+policy_distance_interval: 10000
+
 metric: 'kl' # 'kl' for KL divergence, 'js' for Jensen-Shannon distance
