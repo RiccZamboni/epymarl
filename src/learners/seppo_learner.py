@@ -152,7 +152,6 @@ class SEPPOLearner(PPOLearner):
                 lambda_matrix = th.eye(self.n_agents, device=batch.device)
             elif self.args.lambda_matrix=='selective':
                 lambda_matrix = self.selective_lambda_matrix
-                print('selective lambda matrix:\n', lambda_matrix)
             else:
                 raise NotImplementedError('lambda_matrix should be one or diag')
             lambda_matrix = lambda_matrix.reshape(1, 1, self.n_agents, self.n_agents).repeat(batch.batch_size, batch.max_seq_length-1, 1, 1)
