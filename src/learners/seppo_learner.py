@@ -47,6 +47,10 @@ class SEPPOLearner(PPOLearner):
             self.policy_dist_update_t = -self.args.policy_distance_interval - 1
             self.saved_macs = []
 
+        # set selective lambda matrix before the training
+        if self.args.lambda_matrix=='selective':
+            self.selective_lambda_matrix = th.eye(self.n_agents).to(self.args.device)
+
 
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
         # Get the relevant quantities
@@ -87,10 +91,6 @@ class SEPPOLearner(PPOLearner):
 
         if self.args.kl_logs:
             self.kl_array = th.zeros(self.args.epochs, self.n_agents, self.n_agents)
-
-        # set selective lambda matrix at the beginning of training
-        if self.args.lambda_matrix=='selective':
-            self.selective_lambda_matrix = th.eye(self.n_agents).to(self.args.device)
 
         for k in range(self.args.epochs):
 
@@ -152,6 +152,7 @@ class SEPPOLearner(PPOLearner):
                 lambda_matrix = th.eye(self.n_agents, device=batch.device)
             elif self.args.lambda_matrix=='selective':
                 lambda_matrix = self.selective_lambda_matrix
+                print('selective lambda matrix:\n', lambda_matrix)
             else:
                 raise NotImplementedError('lambda_matrix should be one or diag')
             lambda_matrix = lambda_matrix.reshape(1, 1, self.n_agents, self.n_agents).repeat(batch.batch_size, batch.max_seq_length-1, 1, 1)
