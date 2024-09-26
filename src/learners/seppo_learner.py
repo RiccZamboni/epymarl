@@ -12,6 +12,7 @@ from controllers import REGISTRY as mac_REGISTRY
 from components.standarize_stream import RunningMeanStd
 from learners.ppo_learner import PPOLearner
 from sacred.observers import FileStorageObserver
+from scipy.spatial import distance
 
 
 class SEPPOLearner(PPOLearner):
@@ -121,19 +122,15 @@ class SEPPOLearner(PPOLearner):
             log_ratios = log_pi_taken - old_log_pi_taken.detach()
             ratios = th.exp(log_ratios)
 
-            # kl logging: approximated kl divergence among all agents
-            # derivation can be found in Schulman blog: http://joschu.net/blog/kl-approx.html
+            # kl logging: js distance among all agents
             if self.args.kl_logs:
-                # compute approximated kl divergence among all agents 
+                # compute js among all agents 
                 with th.no_grad():
-                    if self.args.metric == 'kl':
-                        # KL divergence
-                        kl_matrix = self.compute_kl_matrix(log_ratios)
-                    elif self.args.metric == 'js':
+                    if self.args.metric == 'js':
                         # Jensen-Shannon distance
-                        kl_matrix = self.compute_js_matrix(log_ratios)
+                        kl_matrix = self.compute_js_matrix(pi)
                     else:
-                        raise NotImplementedError('metric should be kl or js')
+                        raise NotImplementedError('only js metric is supported')
                     # log kl_divergence for all agents
                     for agent_id_i in range(self.n_agents):
                         for kl in kl_matrix[agent_id_i]:
@@ -238,22 +235,20 @@ class SEPPOLearner(PPOLearner):
                 new_mac = mac_REGISTRY[self.args.mac]( batch.scheme, batch.groups , self.args)
                 new_mac.load_state(mac)
                 self.saved_macs.append(new_mac)
-                log_ratios_list = self.get_log_ratios_list(batch)
+                log_probs_list = self.get_probs_list(batch)
 
-                if self.args.metric == 'kl':
-                    distance_fn = self.compute_approax_kl_div
-                elif self.args.metric == 'js':
-                    distance_fn = self.compute_approx_js_div
+                if self.args.metric == 'js':
+                    distance_fn = self.compute_js_distance
                 else:
-                    raise NotImplementedError('metric should be kl or js')
+                    raise NotImplementedError('only js metric is supported')
 
                 # generate a policy update distance matrix of size n_agents*len(log_ratios_list) x n_agents*len(log_ratios_list)
-                policy_update_distance_matrix = th.zeros(len(log_ratios_list)*self.n_agents, len(log_ratios_list)*self.n_agents)
-                for i,log_ratios_i in enumerate(log_ratios_list):
-                    for j,log_ratios_j in enumerate(log_ratios_list):
+                policy_update_distance_matrix = th.zeros(len(log_probs_list)*self.n_agents, len(log_probs_list)*self.n_agents)
+                for i,probs_i in enumerate(log_probs_list):
+                    for j,probs_j in enumerate(log_probs_list):
                         for agent_id_i in range(self.n_agents):
                             for agent_id_j in range(self.n_agents):
-                                policy_update_distance_matrix[i*self.n_agents+agent_id_i, j*self.n_agents+agent_id_j] =  distance_fn(log_ratios_i[:,:,:,agent_id_i], log_ratios_j[:,:,:,agent_id_j])
+                                policy_update_distance_matrix[i*self.n_agents+agent_id_i, j*self.n_agents+agent_id_j] =  distance_fn(probs_i[:,:,:,agent_id_i], probs_j[:,:,:,agent_id_j])
 
                 # save the policy update distance matrix as csv in sacred directory
                 self.save_to_csv(policy_update_distance_matrix.numpy(), t_env)
@@ -277,38 +272,19 @@ class SEPPOLearner(PPOLearner):
             f.write('n_agents: '+str(self.n_agents)+'\n')
             f.write('n_policies: '+str(len(self.saved_macs)))
 
-    def get_log_ratios_list(self, batch):
+    def get_probs_list(self, batch):
         log_ratios_list = []
         for mac in self.saved_macs:
-            log_ratios_list.append(self.get_log_ratios(mac, batch))
+            log_ratios_list.append(self.get_probs(mac, batch))
         return log_ratios_list
 
-    def get_log_ratios(self, mac, batch):       
+    def get_probs(self, mac, batch):       
 
-        actions = batch["actions"][:, :]
         terminated = batch["terminated"][:, :-1].float()
         mask = batch["filled"][:, :-1].float()
         mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
-        actions = actions[:, :-1]
         mask = mask.repeat(1, 1, self.n_agents)
 
-        old_mac_out = []
-        mac.init_hidden(batch.batch_size)
-        for t in range(batch.max_seq_length - 1):
-            agent_outs = mac.forward(batch, t=t)
-            old_mac_out.append(agent_outs)
-        old_mac_out = th.stack(old_mac_out, dim=1)  # Concat over time
-        old_pi = old_mac_out
-        old_pi[mask == 0] = 1.0
-
-        old_pi_taken = th.gather(old_pi, dim=3, index=actions).squeeze(3)
-        old_log_pi_taken = th.log(old_pi_taken + 1e-10)
-
-        # reshape/ repeat from (batch_size, eplength, n_agents) to (batch_size, eplength, n_agents, n_agents)
-        # to match data of all agents being fed through each agent's network in single batch with
-        # entry [:, :, i, :] being the data of agent i
-        old_log_pi_taken = old_log_pi_taken.unsqueeze(-1).repeat(1, 1, 1, self.n_agents)
-        actions = actions.unsqueeze(-2).repeat(1, 1, 1, self.n_agents, 1)
         mask = mask.unsqueeze(-1).repeat(1, 1, 1, self.n_agents)
 
         mac_out = []
@@ -321,46 +297,21 @@ class SEPPOLearner(PPOLearner):
         pi = mac_out
         pi[mask == 0] = 1.0
 
-        pi_taken = th.gather(pi, dim=-1, index=actions).squeeze(-1)
-        log_pi_taken = th.log(pi_taken + 1e-10)
 
-        log_ratios = log_pi_taken - old_log_pi_taken
+        return pi
 
-        return log_ratios
-
-    def compute_approax_kl_div(self, log_ratios_i, log_ratios_j):
-        log_ratios_ij = log_ratios_i - log_ratios_j
-        ratios_ij = th.exp(log_ratios_ij)
-        kl_ij = ( (ratios_ij - 1) - log_ratios_ij ).mean()
-        return kl_ij
-    
-    def compute_approx_js_div(self, log_ratios_i, log_ratios_j):
-        log_ratios_m = th.log( ( th.exp(log_ratios_i) + th.exp(log_ratios_j) ) / 2  + 1e-10 )
-        # compute kl_im
-        log_ratios_im = log_ratios_i - log_ratios_m
-        ratios_im = th.exp(log_ratios_im)
-        kl_im = ( (ratios_im - 1) - log_ratios_im ).mean()
-        # compute kl_jm
-        log_ratios_jm = log_ratios_j - log_ratios_m
-        ratios_jm = th.exp(log_ratios_jm)
-        kl_jm = ( (ratios_jm - 1) - log_ratios_jm ).mean()
+    def compute_js_distance(self, probs_i, probs_j):
+        probs_i = probs_i.reshape(-1, probs_i.shape[-1] )
+        probs_j = probs_j.reshape(-1, probs_j.shape[-1] )
         # compute js
-        js = (kl_im + kl_jm) / 2 
-        return js
-
-    def compute_kl_matrix(self, log_ratios):
-        kl_matrix = th.zeros(self.n_agents, self.n_agents)
-        for agent_id_i in range(self.n_agents):
-            for agent_id_j in range(self.n_agents):
-                kl_matrix[agent_id_i, agent_id_j] = self.compute_approax_kl_div(log_ratios[:,:,:,agent_id_i], log_ratios[:,:,:,agent_id_j])
-        return kl_matrix
-                 
+        js = distance.jensenshannon( probs_i.transpose(0,1), probs_j.transpose(0,1), base=2).mean() 
+        return th.tensor(js)
     
-    def compute_js_matrix(self, log_ratios):
+    def compute_js_matrix(self, probs):
         kl_matrix = th.zeros(self.n_agents, self.n_agents)
         for agent_id_i in range(self.n_agents):
             for agent_id_j in range( agent_id_i+1 , self.n_agents):
-                kl_matrix[agent_id_i, agent_id_j] = self.compute_approx_js_div(log_ratios[:,:,:,agent_id_i], log_ratios[:,:,:,agent_id_j])
+                kl_matrix[agent_id_i, agent_id_j] = self.compute_js_distance(probs[:,:,:,agent_id_i], probs[:,:,:,agent_id_j])
         kl_matrix = kl_matrix + kl_matrix.t() #symmetric matrix
         return kl_matrix
     
