@@ -37,7 +37,6 @@ t_max: 20050000
 mac: "exp_share_mac"
 agent: "rnn_ns"
 use_critic_importance_sampling: False # to add importance sampling weights on critic loss term
-kl_logs: False # early stopping the training if kl_divergence go beyond kl_target
 lambda_matrix: 'one' # 'one' for all one values (all sharing experience), 'diag' for only diagonal values (No experience sharing), 'selective' for selective experience sharing
 lambda_select_method: 'cutoff' # 'cutoff' method
 lambda_cutoff: 1.0 # KL div cutoff

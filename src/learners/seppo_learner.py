@@ -90,8 +90,7 @@ class SEPPOLearner(PPOLearner):
 
         critic_mask = mask.clone()
 
-        if self.args.kl_logs:
-            self.kl_array = th.zeros(self.args.epochs, self.n_agents, self.n_agents)
+        self.policy_distance_array = th.zeros(self.args.epochs, self.n_agents, self.n_agents)
 
         for k in range(self.args.epochs):
 
@@ -100,11 +99,6 @@ class SEPPOLearner(PPOLearner):
                     'entropy_loss': [],
                     'is_ratio_mean': [],
             }
-
-            # set logs for kl_div among agents
-            if self.args.kl_logs:
-                for agent_id in range( self.n_agents):
-                    actor_logs['kl_with_agent_'+str(agent_id)+'_epoch_'+str(k)] = []
 
             mac_out = []
             self.mac.init_hidden(batch.batch_size * self.n_agents)
@@ -122,24 +116,18 @@ class SEPPOLearner(PPOLearner):
             log_ratios = log_pi_taken - old_log_pi_taken.detach()
             ratios = th.exp(log_ratios)
 
-            # kl logging: js distance among all agents
-            if self.args.kl_logs:
-                # compute js among all agents 
-                with th.no_grad():
-                    if self.args.metric == 'js':
-                        # Jensen-Shannon distance
-                        kl_matrix = self.compute_js_matrix(pi)
-                    else:
-                        raise NotImplementedError('only js metric is supported')
-                    # log kl_divergence for all agents
-                    for agent_id_i in range(self.n_agents):
-                        for kl in kl_matrix[agent_id_i]:
-                            actor_logs['kl_with_agent_'+str(agent_id_i)+'_epoch_'+str(k)].append(kl.item())
-                    self.kl_array[k] = kl_matrix
+            # compute js among all agents 
+            with th.no_grad():
+                if self.args.metric == 'js':
+                    # Jensen-Shannon distance
+                    policy_distance_matrix = self.compute_js_matrix(pi)
+                else:
+                    raise NotImplementedError('only js metric is supported')
+                self.policy_distance_array[k] = policy_distance_matrix
 
-                if self.args.save_policy_update_distance_matrix:
-                    if k==0:
-                        self.update_policy_distance_matrix(t_env, self.mac, batch)
+            if self.args.save_policy_update_distance_matrix:
+                if k==0:
+                    self.update_policy_distance_matrix(t_env, self.mac, batch)
 
 
             # define lambda as a vector of ones of n_agents size (later, will be given as the parameter in the config)
@@ -153,8 +141,7 @@ class SEPPOLearner(PPOLearner):
                 raise NotImplementedError('lambda_matrix should be one or diag')
             lambda_matrix = lambda_matrix.reshape(1, 1, self.n_agents, self.n_agents).repeat(batch.batch_size, batch.max_seq_length-1, 1, 1)
 
-            advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards,
-                                                                      critic_mask, ratios, kl, lambda_matrix)
+            advantages, critic_train_stats = self.train_critic_sequential(self.critic, self.target_critic, batch, rewards, critic_mask, ratios, lambda_matrix)
             advantages = advantages.detach()
             # Calculate policy grad with mask
 
@@ -222,7 +209,7 @@ class SEPPOLearner(PPOLearner):
             self.selective_lambda_matrix = th.eye(self.n_agents).to(self.args.device)
 
             if self.args.lambda_select_method == 'cutoff':
-                kl_matrix = self.kl_array[0, :, :]
+                kl_matrix = self.policy_distance_array[0, :, :]
                 delta = self.args.lambda_cutoff
                 self.selective_lambda_matrix[ kl_matrix < delta ] = 1.0
 
@@ -297,7 +284,6 @@ class SEPPOLearner(PPOLearner):
         pi = mac_out
         pi[mask == 0] = 1.0
 
-
         return pi
 
     def compute_js_distance(self, probs_i, probs_j):
@@ -316,7 +302,7 @@ class SEPPOLearner(PPOLearner):
         return kl_matrix
     
 
-    def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios, kl, lambda_matrix):
+    def train_critic_sequential(self, critic, target_critic, batch, rewards, mask, ratios, lambda_matrix):
 
         # Optimise critic
         with th.no_grad():
