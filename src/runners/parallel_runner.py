@@ -38,6 +38,9 @@ class ParallelRunner:
 
         self.train_returns = []
         self.test_returns = []
+        if self.args.env == "gymmai":
+            self.train_returns_agent = [ [] for _ in range(self.env_info["n_agents"])] 
+            self.test_returns_agent = [ [] for _ in range(self.env_info["n_agents"])]
         self.train_stats = {}
         self.test_stats = {}
 
@@ -96,6 +99,9 @@ class ParallelRunner:
         envs_not_terminated = [b_idx for b_idx, termed in enumerate(terminated) if not termed]
         final_env_infos = []  # may store extra stats like battle won. this is filled in ORDER OF TERMINATION
 
+        if self.args.env == "gymmai":
+            episide_agent_returns = [ [0 for _ in range(self.batch_size)] for _ in range(self.args.n_agents)]
+
         while True:
 
             # Pass the entire batch of experiences up till now to the agents
@@ -146,6 +152,8 @@ class ParallelRunner:
 
                     if self.args.env == "gymmai":
                         episode_returns[idx] += sum(data["reward"])
+                        for i,r in enumerate(data["reward"]):
+                            episide_agent_returns[i][idx] += r
                     else:
                         episode_returns[idx] += data["reward"]
                     episode_lengths[idx] += 1
@@ -188,6 +196,8 @@ class ParallelRunner:
 
         cur_stats = self.test_stats if test_mode else self.train_stats
         cur_returns = self.test_returns if test_mode else self.train_returns
+        if self.args.env == "gymmai":
+            cur_agent_returns = self.test_returns_agent if test_mode else self.train_returns_agent
         log_prefix = "test_" if test_mode else ""
         infos = [cur_stats] + final_env_infos
         cur_stats.update({k: sum(d.get(k, 0) for d in infos) for k in set.union(*[set(d) for d in infos])})
@@ -195,10 +205,17 @@ class ParallelRunner:
         cur_stats["ep_length"] = sum(episode_lengths) + cur_stats.get("ep_length", 0)
 
         cur_returns.extend(episode_returns)
+        if self.args.env == "gymmai":
+            for i,cur_agent_return in enumerate(episide_agent_returns):
+                cur_agent_returns[i].extend(cur_agent_return)
 
         n_test_runs = max(1, self.args.test_nepisode // self.batch_size) * self.batch_size
         if test_mode and (len(self.test_returns) == n_test_runs):
             self._log(cur_returns, cur_stats, log_prefix)
+            if self.args.env == "gymmai":
+                for i,cur_agent_return in enumerate(cur_agent_returns):
+                    self.logger.log_stat(log_prefix + f"agent_{i}_return_mean", np.mean(cur_agent_return), self.t_env)
+                    # self._log(cur_agent_return, cur_stats, log_prefix + f"agent_{i}_")
         elif self.t_env - self.log_train_stats_t >= self.args.runner_log_interval:
             self._log(cur_returns, cur_stats, log_prefix)
             if hasattr(self.mac.action_selector, "epsilon"):
