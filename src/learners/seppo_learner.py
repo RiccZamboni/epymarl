@@ -1,19 +1,12 @@
 # code heavily adapted from https://github.com/AnujMahajanOxf/MAVEN
 import copy
-import numpy as np
 from components.episode_buffer import EpisodeBatch
-from modules.critics.coma import COMACritic
-from modules.critics.centralV import CentralVCritic
-from utils.rl_utils import build_td_lambda_targets
 import torch as th
 from torch.optim import Adam
 from modules.critics import REGISTRY as critic_resigtry
-from controllers import REGISTRY as mac_REGISTRY
 from components.standarize_stream import RunningMeanStd
 from components.policy_distances import PolicyDistances
 from learners.ppo_learner import PPOLearner
-from sacred.observers import FileStorageObserver
-from scipy.spatial import distance
 
 
 class SEPPOLearner(PPOLearner):
