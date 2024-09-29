@@ -260,10 +260,10 @@ class SEPPOLearner(PPOLearner):
             f.write('n_policies: '+str(len(self.saved_macs)))
 
     def get_probs_list(self, batch):
-        log_ratios_list = []
+        probs_list = []
         for mac in self.saved_macs:
-            log_ratios_list.append(self.get_probs(mac, batch))
-        return log_ratios_list
+            probs_list.append(self.get_probs(mac, batch))
+        return probs_list
 
     def get_probs(self, mac, batch):       
 
