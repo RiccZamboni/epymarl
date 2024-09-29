@@ -5,6 +5,12 @@ from controllers import REGISTRY as mac_REGISTRY
 from sacred.observers import FileStorageObserver
 
 class PolicyDistances:
+    '''
+    This class is used to compute the distance between the policies of the agents.
+    The distance is computed using the Jensen-Shannon divergence. In future, other
+    distance metrics can be added.
+    Currently, the class is tested with only IPPO and SEPPO algorithms.
+    '''
     def __init__(self, logger, args):
         self.logger = logger
         self.args = args
@@ -63,7 +69,7 @@ class PolicyDistances:
             self.policy_dist_update_t = t_env
 
     def save_to_csv(self, policy_update_distance_matrix, t_env):
-        
+
         # get the path to save the policy update distance matrix
         run_obj = self.logger._run_obj
         file_observer = next(observer for observer in run_obj.observers if isinstance(observer, FileStorageObserver))
@@ -93,16 +99,31 @@ class PolicyDistances:
         mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
         mask = mask.repeat(1, 1, self.args.n_agents)
 
-        mask = mask.unsqueeze(-1).repeat(1, 1, 1, self.args.n_agents)
-
         mac_out = []
-        mac.init_hidden(batch.batch_size * self.args.n_agents)
+        if self.args.name=="seppo":
+            mac.init_hidden(batch.batch_size * self.args.n_agents)
+            mask = mask.unsqueeze(-1).repeat(1, 1, 1, self.args.n_agents)
+        elif self.args.name=="ippo":
+            mac.init_hidden(batch.batch_size)
+        else:
+            raise NotImplementedError('only supports ippo and seppo algorithms')
+
         for t in range(batch.max_seq_length - 1):
-            agent_outs = mac.forward( batch, t=t, all_agents=True )
+            if self.args.name=="seppo":
+                agent_outs = mac.forward( batch, t=t, all_agents=True )
+            elif self.args.name=="ippo":
+                agent_outs = mac.forward( batch, t=t)
+            else:
+                raise NotImplementedError('only supports ippo and seppo algorithms')
+            
             mac_out.append(agent_outs)
         mac_out = th.stack(mac_out, dim=1)  # Concat over time
 
         pi = mac_out
         pi[mask == 0] = 1.0
+
+        # for ippo, repeat pi for n_agents since same policy is shared among the agents
+        if self.args.name == 'ippo':
+            pi = pi.unsqueeze(-2).repeat(1, 1, 1, self.args.n_agents, 1)
 
         return pi.reshape(-1, self.args.n_agents, self.args.n_actions)

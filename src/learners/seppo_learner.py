@@ -1,4 +1,3 @@
-# code heavily adapted from https://github.com/AnujMahajanOxf/MAVEN
 import copy
 from components.episode_buffer import EpisodeBatch
 import torch as th

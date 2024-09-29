@@ -33,3 +33,8 @@ eps_clip: 0.2
 name: "ippo"
 
 t_max: 20050000
+
+# ---- Policy Distance ----
+save_policy_update_distance_matrix: False
+policy_distance_interval: 10000
+metric: 'js' # only 'js' (for Jensen-Shannon distance) is supported

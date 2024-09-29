@@ -8,6 +8,7 @@ import torch as th
 from torch.optim import Adam
 from modules.critics import REGISTRY as critic_resigtry
 from components.standarize_stream import RunningMeanStd
+from components.policy_distances import PolicyDistances
 
 
 class PPOLearner:
@@ -37,6 +38,9 @@ class PPOLearner:
             self.ret_ms = RunningMeanStd(shape=(self.n_agents, ), device=device)
         if self.args.standardise_rewards:
             self.rew_ms = RunningMeanStd(shape=(1,), device=device)
+
+        self.pi_distances = PolicyDistances(logger, args)
+
 
     def train(self, batch: EpisodeBatch, t_env: int, episode_num: int):
         # Get the relevant quantities
@@ -90,6 +94,10 @@ class PPOLearner:
             ratios = th.exp(log_pi_taken - old_log_pi_taken.detach())
             surr1 = ratios * advantages
             surr2 = th.clamp(ratios, 1 - self.args.eps_clip, 1 + self.args.eps_clip) * advantages
+
+            if self.args.save_policy_update_distance_matrix:
+                if k==0:
+                    self.pi_distances.update_all_pi_distance_matrix(t_env, self.mac, batch)
 
             entropy = -th.sum(pi * th.log(pi + 1e-10), dim=-1)
             pg_loss = -((th.min(surr1, surr2) + self.args.entropy_coef * entropy) * mask).sum() / mask.sum()
