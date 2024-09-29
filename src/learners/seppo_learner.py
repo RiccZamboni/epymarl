@@ -222,7 +222,7 @@ class SEPPOLearner(PPOLearner):
                 new_mac = mac_REGISTRY[self.args.mac]( batch.scheme, batch.groups , self.args)
                 new_mac.load_state(mac)
                 self.saved_macs.append(new_mac)
-                log_probs_list = self.get_probs_list(batch)
+                probs_list = self.get_probs_list(batch)
 
                 if self.args.metric == 'js':
                     distance_fn = self.compute_js_distance
@@ -230,9 +230,9 @@ class SEPPOLearner(PPOLearner):
                     raise NotImplementedError('only js metric is supported')
 
                 # generate a policy update distance matrix of size n_agents*len(log_ratios_list) x n_agents*len(log_ratios_list)
-                policy_update_distance_matrix = th.zeros(len(log_probs_list)*self.n_agents, len(log_probs_list)*self.n_agents)
-                for i,probs_i in enumerate(log_probs_list):
-                    for j,probs_j in enumerate(log_probs_list):
+                policy_update_distance_matrix = th.zeros(len(probs_list)*self.n_agents, len(probs_list)*self.n_agents)
+                for i,probs_i in enumerate(probs_list):
+                    for j,probs_j in enumerate(probs_list):
                         for agent_id_i in range(self.n_agents):
                             for agent_id_j in range(self.n_agents):
                                 policy_update_distance_matrix[i*self.n_agents+agent_id_i, j*self.n_agents+agent_id_j] =  distance_fn(probs_i[:,:,:,agent_id_i], probs_j[:,:,:,agent_id_j])
