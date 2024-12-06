@@ -103,17 +103,25 @@ class SEPPOLearner(PPOLearner):
 
             pi_taken = th.gather(pi, dim=-1, index=actions).squeeze(-1)
             log_pi_taken = th.log(pi_taken + 1e-10)
-
-            log_ratios = log_pi_taken - old_log_pi_taken.detach()
+            if self.args.importance_sampling == 'wis':
+                log_ratios = log_pi_taken - old_log_pi_taken.detach() - th.log(self.n_agents)
+            else:
+                log_ratios = log_pi_taken - old_log_pi_taken.detach()
             ratios = th.exp(log_ratios)
 
-            # compute js among all agents 
+            # compute distances among all agents 
             with th.no_grad():
                 if self.args.metric == 'js':
                     # Jensen-Shannon distance
                     policy_distance_matrix = self.pi_distances.compute_js_matrix(pi)
+                elif self.args.metric == 'kl':
+                    # KL divergence
+                    policy_distance_matrix = self.pi_distances.compute_kl_matrix(pi)
+                elif self.args.metric == 'd2':
+                    # d2 divergence
+                    policy_distance_matrix = self.pi_distances.compute_d2_matrix(pi)
                 else:
-                    raise NotImplementedError('only js metric is supported')
+                    raise NotImplementedError('only js, kl, d2 metric is supported')
                 self.policy_distance_array[k] = policy_distance_matrix
 
             if self.args.save_policy_update_distance_matrix:

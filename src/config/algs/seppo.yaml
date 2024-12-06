@@ -46,4 +46,5 @@ lambda_update_start: 50000
 save_policy_update_distance_matrix: False
 policy_distance_interval: 10000
 
-metric: 'js' # only 'js' (for Jensen-Shannon distance) is supported
+metric: 'kl' # only 'js' 'kl' 'd2' supported
+importance_sampling: 'wis' # only 'wis' and 'is' supported

@@ -1,6 +1,7 @@
 import numpy as np
 import torch as th
 from scipy.spatial import distance
+from scipy.special import kl_div
 from controllers import REGISTRY as mac_REGISTRY
 from sacred.observers import FileStorageObserver
 
@@ -41,6 +42,50 @@ class PolicyDistances:
         js_matrix = js_matrix + js_matrix.t() #symmetric matrix
         return js_matrix
     
+    def compute_kl_divergence(self, probs_i, probs_j):
+
+        # shape manipulation for compatibility with js function
+        probs_i = probs_i.transpose(0,1)
+        probs_j = probs_j.transpose(0,1)
+
+        # compute kl
+        kl = kl_div(probs_i, probs_j).mean() 
+        return th.tensor(kl)
+    
+    def compute_d2_divergence(self, probs_i, probs_j):
+
+        # shape manipulation for compatibility with js function
+        probs_i = probs_i.transpose(0,1)
+        probs_j = probs_j.transpose(0,1)
+
+        # compute d2
+        exp_renyi_div = th.sum((probs_i ** 2) / probs_j)
+        return th.tensor(exp_renyi_div)
+    
+    def compute_kl_matrix(self, probs):
+
+        # shape manipulation for compatibility with all the learners
+        probs = probs.reshape(-1, self.args.n_agents, self.args.n_actions)
+
+        # compute kl matrix
+        kl_matrix = th.zeros(self.args.n_agents, self.args.n_agents)
+        for agent_id_i in range(self.args.n_agents):
+            for agent_id_j in range( agent_id_i+1 , self.args.n_agents):
+                kl_matrix[agent_id_i, agent_id_j] = self.compute_kl_divergence(probs[:,agent_id_i], probs[:,agent_id_j])
+        return kl_matrix
+    
+    def compute_d2_matrix(self, probs):
+
+        # shape manipulation for compatibility with all the learners
+        probs = probs.reshape(-1, self.args.n_agents, self.args.n_actions)
+
+        # compute kl matrix
+        d2_matrix = th.zeros(self.args.n_agents, self.args.n_agents)
+        for agent_id_i in range(self.args.n_agents):
+            for agent_id_j in range( agent_id_i+1 , self.args.n_agents):
+                d2_matrix[agent_id_i, agent_id_j] = self.compute_d2_divergence(probs[:,agent_id_i], probs[:,agent_id_j])
+        return d2_matrix
+    
     def update_all_pi_distance_matrix(self, t_env, mac, batch):
         if (t_env - self.policy_dist_update_t >= self.args.policy_distance_interval):
             print('updating policy distance matrix at t_env:', t_env)
@@ -52,8 +97,12 @@ class PolicyDistances:
 
                 if self.args.metric == 'js':
                     distance_fn = self.compute_js_distance
+                elif self.args.metric == 'kl':
+                    distance_fn = self.compute_kl_divergence
+                elif self.args.metric == 'd2':
+                    distance_fn = self.compute_d2_divergence
                 else:
-                    raise NotImplementedError('only js metric is supported')
+                    raise NotImplementedError('only js, kl, d2 are supported')
 
                 # generate a policy update distance matrix of size n_agents*len(log_ratios_list) x n_agents*len(log_ratios_list)
                 policy_update_distance_matrix = th.zeros(len(probs_list)*self.args.n_agents, len(probs_list)*self.args.n_agents)
