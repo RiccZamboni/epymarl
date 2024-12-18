@@ -94,7 +94,7 @@ class SEPPOLearner(PPOLearner):
             mac_out = []
             self.mac.init_hidden(batch.batch_size * self.n_agents)
             for t in range(batch.max_seq_length - 1):
-                agent_outs = self.mac.forward( batch, t=t, all_agents=True )
+                agent_outs = self.mac.forward(batch, t=t, all_agents=True)
                 mac_out.append(agent_outs)
             mac_out = th.stack(mac_out, dim=1)  # Concat over time
 
