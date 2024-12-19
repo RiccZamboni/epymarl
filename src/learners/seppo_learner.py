@@ -104,7 +104,7 @@ class SEPPOLearner(PPOLearner):
             pi_taken = th.gather(pi, dim=-1, index=actions).squeeze(-1)
             log_pi_taken = th.log(pi_taken + 1e-10)
             if self.args.importance_sampling == 'wis':
-                log_ratios = log_pi_taken - old_log_pi_taken.detach() - th.log(self.n_agents)
+                log_ratios = log_pi_taken - old_log_pi_taken.detach() - th.log(th.tensor(self.n_agents, dtype=th.float32))
             else:
                 log_ratios = log_pi_taken - old_log_pi_taken.detach()
             ratios = th.exp(log_ratios)
