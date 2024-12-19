@@ -67,16 +67,41 @@ class PolicyDistances:
         # compute kl
         kl = kl_div(probs_i, probs_j).mean() 
         return th.tensor(kl)
+
+    def compute_kl_divergence_gpu(self, probs_i, probs_j, reduction='batchmean'):
+
+        # shape manipulation for compatibility with js function
+        probs_i = probs_i.transpose(0,1)
+        probs_j = probs_j.transpose(0,1)
+
+        return F.kl_div(probs_j.log(), probs_i, reduction=reduction)
     
     def compute_d2_divergence(self, probs_i, probs_j):
 
-        # shape manipulation for compatibility with js function
+        # shape manipulation for compatibility
         probs_i = probs_i.transpose(0,1)
         probs_j = probs_j.transpose(0,1)
 
         # compute d2
         exp_renyi_div = th.sum((probs_i ** 2) / probs_j)
         return th.tensor(exp_renyi_div)
+
+    def compute_d2_divergence_gpu(self, probs_i, probs_j, epsilon=1e-10):
+        # shape manipulation for compatibility
+        probs_i = probs_i.transpose(0,1)
+        probs_j = probs_j.transpose(0,1)
+        # Add small constant and normalize
+        probs_i = probs_i + epsilon
+        probs_j = probs_j + epsilon
+        
+        probs_i = probs_i / probs_i.sum(dim=-1, keepdim=True)
+        probs_j = probs_j / probs_j.sum(dim=-1, keepdim=True)
+        
+        # Compute in log space for stability
+        log_divergence = th.logsumexp(2 * th.log(probs_i) - th.log(probs_j), dim=-1)
+        
+        # Exponentiate back
+        return th.exp(log_divergence).mean()
     
     def compute_kl_matrix(self, probs):
 
@@ -87,7 +112,8 @@ class PolicyDistances:
         kl_matrix = th.zeros(self.args.n_agents, self.args.n_agents)
         for agent_id_i in range(self.args.n_agents):
             for agent_id_j in range( agent_id_i+1 , self.args.n_agents):
-                kl_matrix[agent_id_i, agent_id_j] = self.compute_kl_divergence(probs[:,agent_id_i], probs[:,agent_id_j])
+                # kl_matrix[agent_id_i, agent_id_j] = self.compute_kl_divergence(probs[:,agent_id_i], probs[:,agent_id_j])
+                kl_matrix[agent_id_i, agent_id_j] = self.compute_kl_divergence_gpu(probs[:,agent_id_i], probs[:,agent_id_j])
         return kl_matrix
     
     def compute_d2_matrix(self, probs):
@@ -99,7 +125,8 @@ class PolicyDistances:
         d2_matrix = th.zeros(self.args.n_agents, self.args.n_agents)
         for agent_id_i in range(self.args.n_agents):
             for agent_id_j in range( agent_id_i+1 , self.args.n_agents):
-                d2_matrix[agent_id_i, agent_id_j] = self.compute_d2_divergence(probs[:,agent_id_i], probs[:,agent_id_j])
+                # d2_matrix[agent_id_i, agent_id_j] = self.compute_d2_divergence(probs[:,agent_id_i], probs[:,agent_id_j])
+                d2_matrix[agent_id_i, agent_id_j] = self.compute_d2_divergence_gpu(probs[:,agent_id_i], probs[:,agent_id_j])
         return d2_matrix
     
     def update_all_pi_distance_matrix(self, t_env, mac, batch):
@@ -115,9 +142,11 @@ class PolicyDistances:
                     # distance_fn = self.compute_js_distance
                     distance_fn = self.compute_js_distance_gpu
                 elif self.args.metric == 'kl':
-                    distance_fn = self.compute_kl_divergence
+                    # distance_fn = self.compute_kl_divergence
+                    distance_fn = self.compute_kl_divergence_gpu
                 elif self.args.metric == 'd2':
-                    distance_fn = self.compute_d2_divergence
+                    # distance_fn = self.compute_d2_divergence
+                    distance_fn = self.compute_d2_divergence_gpu
                 else:
                     raise NotImplementedError('only js, kl, d2 are supported')
 
