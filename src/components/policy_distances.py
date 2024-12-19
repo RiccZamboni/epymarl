@@ -53,7 +53,8 @@ class PolicyDistances:
         js_matrix = th.zeros(self.args.n_agents, self.args.n_agents)
         for agent_id_i in range(self.args.n_agents):
             for agent_id_j in range( agent_id_i+1 , self.args.n_agents):
-                js_matrix[agent_id_i, agent_id_j] = self.compute_js_distance(probs[:,agent_id_i], probs[:,agent_id_j])
+                # js_matrix[agent_id_i, agent_id_j] = self.compute_js_distance(probs[:,agent_id_i], probs[:,agent_id_j])
+                js_matrix[agent_id_i, agent_id_j] = self.compute_js_distance_gpu(probs[:,agent_id_i], probs[:,agent_id_j]) 
         js_matrix = js_matrix + js_matrix.t() #symmetric matrix
         return js_matrix
     
