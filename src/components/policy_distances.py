@@ -1,5 +1,6 @@
 import numpy as np
 import torch as th
+import torch.nn.functional as F
 from scipy.spatial import distance
 from scipy.special import kl_div
 from controllers import REGISTRY as mac_REGISTRY
@@ -28,10 +29,24 @@ class PolicyDistances:
         # compute js
         js = distance.jensenshannon( probs_i, probs_j, base=2).mean() 
         return th.tensor(js)
+
+    def compute_js_distance_gpu(self, probs_i, probs_j, base=2):
+        # Ensure valid probabilities
+        p = F.softmax(probs_i, dim=-1)
+        q = F.softmax(probs_j, dim=-1)
+        
+        # Calculate the mean distribution
+        m = 0.5 * (p + q)
+        
+        # Calculate JS divergence
+        return 0.5 * (
+            F.kl_div(m.log(), probs_i, reduction='batchmean') +
+            F.kl_div(m.log(), probs_j, reduction='batchmean')
+        ) / th.log(th.tensor(base, device=p.device))
     
     def compute_js_matrix(self, probs):
 
-        # shape manupulation for compatibility with all the learners
+        # shape manipulation for compatibility with all the learners
         probs = probs.reshape(-1, self.args.n_agents, self.args.n_actions)
 
         # compute js matrix
@@ -96,7 +111,8 @@ class PolicyDistances:
                 probs_list = self.get_probs_list(batch)
 
                 if self.args.metric == 'js':
-                    distance_fn = self.compute_js_distance
+                    # distance_fn = self.compute_js_distance
+                    distance_fn = self.compute_js_distance_gpu
                 elif self.args.metric == 'kl':
                     distance_fn = self.compute_kl_divergence
                 elif self.args.metric == 'd2':
